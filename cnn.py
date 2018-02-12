@@ -10,6 +10,7 @@ from tensorflow.examples.tutorials.mnist import input_data
 import numpy as np
 import os, time, math
 from keras import backend as K
+from keras import regularizers
 
 from influence.neural_network import NeuralNetwork
 
@@ -32,26 +33,61 @@ class CNN(NeuralNetwork):
         self.input_channels = input_channels
         self.input_dim = self.input_side * self.input_side * self.input_channels
         self.conv_patch_size = 5
-        if non_linearity == 'tanh':
-            self.non_linearity = tf.nn.tanh
-        else:
-            self.non_linearity = tf.sigmoid
+        self.non_linearity = non_linearity
         self.conv1_ch = conv1_ch
         self.conv2_ch = conv2_ch
+        
+        self.reshape_data() #reshape data for the CNN
 
         super(CNN, self).__init__(**kwargs)
 
-
+    def create_model(self):
+        """
+        Create a Keras Sequential Model
+        """
+        layers = [
+        Conv2D(
+            self.conv1_ch, 
+            (self.conv_patch_size, self.conv_patch_size),
+            padding='valid',
+            input_shape=(self.input_side, self.input_side, 1),
+            name='conv1',
+            kernel_regularizer=regularizers.l2(self.beta),
+            bias_regularizer=regularizers.l2(self.beta)
+           ),
+        Activation(self.non_linearity),
+        Conv2D(self.conv2_ch, (self.conv_patch_size, self.conv_patch_size), name='conv2',
+            kernel_regularizer=regularizers.l2(self.beta),
+            bias_regularizer=regularizers.l2(self.beta)),
+        Activation(self.non_linearity),
+        Dropout(self.dropout_prob),
+        Flatten(),
+        Dense(128, name='dense1',
+            kernel_regularizer=regularizers.l2(self.beta),
+            bias_regularizer=regularizers.l2(self.beta)),
+        Activation(self.non_linearity),
+        Dropout(self.dropout_prob),
+        Dense(self.num_classes, name='logits',
+            kernel_regularizer=regularizers.l2(self.beta),
+            bias_regularizer=regularizers.l2(self.beta)),
+        Activation('softmax')
+        ]
+    
+    
+        model = Sequential()
+        for layer in layers:
+            model.add(layer)
+        return model
+    
     def get_params(self):
         """
         Desc:
             Required for getting params to be used in HVP Lissa calculations
         """
         all_params = []
-        for layer in ['conv1', 'conv2', 'dense']:        
-            for var_name in ['weights', 'biases']:
-                temp_tensor = tf.get_default_graph().get_tensor_by_name("%s/%s:0" % (layer, var_name))            
-                all_params.append(temp_tensor)      
+        for layer in self.model.layers:
+            if layer.name in ['conv1', 'conv2', 'dense1', 'logits']:        
+                all_params.append(layer.trainable_weights)      
         return all_params        
         
 
@@ -71,95 +107,62 @@ class CNN(NeuralNetwork):
         return input_placeholder, labels_placeholder
     
     
-    def get_conv_layer(self, input_x, conv_patch_size, input_channels, output_channels, stride):
+    def get_logits_preds(self):
         """
         Desc:
-            Create a Convolution layer in tensorflow with the specified attributes.
+            Get logits of models
         """
-        
-        std_dev = 2.0 / math.sqrt(float(conv_patch_size * conv_patch_size * input_channels))
-        initializer = tf.truncated_normal_initializer(stddev = std_dev, dtype=tf.float32)
-                                        
-        weights = tf.get_variable( 'weights', 
-                                    [conv_patch_size*conv_patch_size*input_channels*output_channels], 
-                                    tf.float32,
-                                    initializer=initializer)
-                                  
-        biases = tf.get_variable('biases',
-                                [output_channels],
-                                tf.float32,
-                                tf.constant_initializer(0.0))
-                                  
-        weights_reshaped = tf.reshape(weights, [conv_patch_size, conv_patch_size, input_channels, output_channels])
-                                  
-        layer = self.non_linearity(
-                    tf.nn.conv2d(input_x, weights_reshaped, strides=[1,stride,stride,1], padding='VALID') + biases)
-        
-  
-        return layer
+        preds = self.model(self.input_placeholder)
+        logits = preds.op.inputs #inputs to the softmax operation
+        return logits, preds
     
-    def get_dense_layer(self, input_x, input_size):
+    def compile_model(self):
         """
-        Desc:
-            Create a fully connected layer. 
+        Initialize the model
         """
-                 
-        std_dev = 1.0 / math.sqrt(float(input_size))
-        initializer = tf.truncated_normal_initializer(stddev = std_dev, dtype=tf.float32)
-                                        
-        weights = tf.get_variable( 'weights', 
-                                    [input_size * self.num_classes], 
-                                    tf.float32,
-                                    initializer=initializer)
-                                  
-        biases = tf.get_variable('biases',
-                                [self.num_classes],
-                                 tf.float32,
-                                tf.constant_initializer(0.0))
-                                  
-        weights_reshaped = tf.reshape(weights, [input_size, self.num_classes])
-                                  
-        layer = tf.matmul(input_x, weights_reshaped) + biases
+        self.model.compile(loss='categorical_crossentropy',
+              optimizer='adadelta',
+              metrics=['accuracy'])
         
-        return layer
-
-
-
-    def forward_pass(self, input_x):  
-        """
-        Desc:
-            Populate the tf graph with operations for forward pass through the network. 
+    def save_model(self, store_path_model, store_path_weights):
+        # serialize model to JSON
+        model_json = self.model.to_json()
+        with open(store_path, "w") as json_file:
+            json_file.write(model_json)
+        # serialize weights to HDF5
+        self.model.save_weights(store_path_weights)
+        print("Saved model to disk")
+ 
+    def load_model(self, load_path_model, load_path_weights):
+        # load json and create model
+        json_file = open(load_path_model, 'r')
+        loaded_model_json = json_file.read()
+        json_file.close()
+        self.model = model_from_json(loaded_model_json)
+        # load weights into new model
+        self.model.load_weights(load_path_weights)
+        self.model.compile(loss='categorical_crossentropy',
+              optimizer='adadelta',
+              metrics=['accuracy'])
+        print("Loaded model from disk")
         
-        """
-
-        #28 x 28
-        input_reshaped = tf.reshape(input_x, [-1, self.input_side, self.input_side, self.input_channels])
-
-        # Convolutional Layer #1
-        with tf.variable_scope('conv1'):
-            conv1 = self.get_conv_layer(input_reshaped, self.conv_patch_size, self.input_channels, self.conv1_ch,1)
-        #output = (28 - 5) + 1 = 24
-
-        # Convolutional Layer #2 
-        with tf.variable_scope('conv2'):
-            conv2 = self.get_conv_layer(conv1, self.conv_patch_size, self.conv1_ch, self.conv2_ch,1)
-        #output = (24 - 5) + 1 = 20
-                                                           
-        # Dense Layer
-        conv2_flat = tf.reshape(conv2, [-1, 20 * 20 * self.conv2_ch])
-                                        
-        with tf.variable_scope('dense'):
-            logits = self.get_dense_layer(conv2_flat, 20*20*self.conv2_ch)
-       
-            
-        return logits
-
-    def predict(self, logits):
+    def reshape_data(self):
         """
         Desc:
-            Apply softmax to network outputs
-        """
-        preds = tf.nn.softmax(logits, name='preds')
-        return preds
+            Trains model for a specified number of epochs.
+        """    
+        
+        
+        self.train_data.images = self.train_data.images.reshape(-1, 28, 28, 1)
+        self.val_data.images = self.val_data.images.reshape(-1, 28, 28, 1)
+        self.test_data.images = self.test_data.images.reshape(-1, 28, 28, 1)
     
-    
+        self.train_data.images = self.train_data.images.astype('float32')
+        self.val_data.images = self.val_data.images.astype('float32')
+        self.test_data.images = self.test_data.images.astype('float32')
+        
+        self.train_data.images /= 255
+        self.val_data.images /= 255
+        self.test_data.images /= 255
+        
+        
