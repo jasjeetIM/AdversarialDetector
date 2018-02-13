@@ -49,9 +49,14 @@ class NeuralNetwork(object):
         
         
         #Hardcode the data for now. We will add better database objects in the future
-        self.train_data = self.data.train
-        self.val_data = self.data.validation
-        self.test_data = self.data.test
+        self.train_data = self.data.train.images
+        self.train_labels = self.data.train.labels
+        self.val_data = self.data.validation.images
+        self.val_labels = self.data.validation.labels
+        self.test_data = self.data.test.images
+        self.test_labels = self.data.test.labels
+        
+        self.reshape_data()
          
         # Initialize Tf and Keras
         gpu_options = tf.GPUOptions(allow_growth=True)
@@ -69,7 +74,7 @@ class NeuralNetwork(object):
                 
         # Setup model operation implemented by child classes
         self.model = self.create_model()
-        self.logits, self.preds = self.get_logits(self.input_placeholder)
+        self.logits, self.preds = self.get_logits_preds(self.input_placeholder)
         self.params = self.get_params()
 
         # Setup loss 
@@ -222,17 +227,17 @@ class NeuralNetwork(object):
             Trains model for a specified number of epochs.
         """    
         
-        model.fit(
-            self.train_data.images, 
-            self.train_data.labels,
-            epochs=epochs
+        self.model.fit(
+            self.train_data, 
+            self.train_labels,
+            epochs=epochs,
             batch_size=128,
-            validation_data=(self.val_data.images, self.val_data.labels),
+            validation_data=(self.val_data, self.val_labels),
             verbose=1,
             shuffle=True
         )
 
-        model.evaluate(self.test_data.images, self.test_data.labels, batch_size=self.batch_size)
+        self.model.evaluate(self.test_data, self.test_labels, batch_size=self.batch_size)
     
     def update_feed_dict_with_v_placeholder(self, feed_dict, vec):
         """

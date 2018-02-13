@@ -11,6 +11,9 @@ import numpy as np
 import os, time, math
 from keras import backend as K
 from keras import regularizers
+from keras.regularizers import l2
+from keras.models import Sequential, model_from_json
+from keras.layers import Input, Dense, Dropout, Activation, Flatten, Conv2D
 
 from influence.neural_network import NeuralNetwork
 
@@ -20,7 +23,7 @@ SEED = 12
 class CNN(NeuralNetwork):
     """Convolutional Neural Network - 2 hidden layers (for now) """
 
-    def __init__(self, input_side=28, input_channels=1, non_linearity='tanh', conv1_ch=32, conv2_ch=64, **kwargs):
+    def __init__(self, input_side=28, input_channels=1, non_linearity='sigmoid', conv1_ch=32, conv2_ch=64, **kwargs):
         """
         Params:
         input_side(int): size of the y-axis. We are assuming x = y 
@@ -36,10 +39,9 @@ class CNN(NeuralNetwork):
         self.non_linearity = non_linearity
         self.conv1_ch = conv1_ch
         self.conv2_ch = conv2_ch
-        
-        self.reshape_data() #reshape data for the CNN
 
         super(CNN, self).__init__(**kwargs)
+        
 
     def create_model(self):
         """
@@ -51,25 +53,17 @@ class CNN(NeuralNetwork):
             (self.conv_patch_size, self.conv_patch_size),
             padding='valid',
             input_shape=(self.input_side, self.input_side, 1),
-            name='conv1',
-            kernel_regularizer=regularizers.l2(self.beta),
-            bias_regularizer=regularizers.l2(self.beta)
+            name='conv1'
            ),
         Activation(self.non_linearity),
-        Conv2D(self.conv2_ch, (self.conv_patch_size, self.conv_patch_size), name='conv2',
-            kernel_regularizer=regularizers.l2(self.beta),
-            bias_regularizer=regularizers.l2(self.beta)),
+        Conv2D(self.conv2_ch, (self.conv_patch_size, self.conv_patch_size), name='conv2'),
         Activation(self.non_linearity),
         Dropout(self.dropout_prob),
         Flatten(),
-        Dense(128, name='dense1',
-            kernel_regularizer=regularizers.l2(self.beta),
-            bias_regularizer=regularizers.l2(self.beta)),
+        Dense(128, name='dense1'),
         Activation(self.non_linearity),
         Dropout(self.dropout_prob),
-        Dense(self.num_classes, name='logits',
-            kernel_regularizer=regularizers.l2(self.beta),
-            bias_regularizer=regularizers.l2(self.beta)),
+        Dense(self.num_classes, name='logits'),
         Activation('softmax')
         ]
     
@@ -87,7 +81,8 @@ class CNN(NeuralNetwork):
         all_params = []
         for layer in self.model.layers:
             if layer.name in ['conv1', 'conv2', 'dense1', 'logits']:        
-                all_params.append(layer.trainable_weights)      
+                for weight in layer.trainable_weights:
+                    all_params.append(weight)  
         return all_params        
         
 
@@ -98,22 +93,22 @@ class CNN(NeuralNetwork):
         """
         input_placeholder = tf.placeholder(
             tf.float32, 
-            shape=(None, self.input_dim),
+            shape=(None, self.input_dim, self.input_dim, 1),
             name='input_placeholder')
         labels_placeholder = tf.placeholder(
             tf.int32,             
-            shape=(None),
+            shape=(None,self.num_classes),
             name='labels_placeholder')
         return input_placeholder, labels_placeholder
     
     
-    def get_logits_preds(self):
+    def get_logits_preds(self, inputs):
         """
         Desc:
             Get logits of models
         """
-        preds = self.model(self.input_placeholder)
-        logits = preds.op.inputs #inputs to the softmax operation
+        preds = self.model(inputs)
+        logits, = preds.op.inputs #inputs to the softmax operation
         return logits, preds
     
     def compile_model(self):
@@ -127,7 +122,7 @@ class CNN(NeuralNetwork):
     def save_model(self, store_path_model, store_path_weights):
         # serialize model to JSON
         model_json = self.model.to_json()
-        with open(store_path, "w") as json_file:
+        with open(store_path_model, "w") as json_file:
             json_file.write(model_json)
         # serialize weights to HDF5
         self.model.save_weights(store_path_weights)
@@ -153,16 +148,13 @@ class CNN(NeuralNetwork):
         """    
         
         
-        self.train_data.images = self.train_data.images.reshape(-1, 28, 28, 1)
-        self.val_data.images = self.val_data.images.reshape(-1, 28, 28, 1)
-        self.test_data.images = self.test_data.images.reshape(-1, 28, 28, 1)
+        self.train_data = self.train_data.reshape(-1, 28, 28, 1)
+        self.val_data = self.val_data.reshape(-1, 28, 28, 1)
+        self.test_data = self.test_data.reshape(-1, 28, 28, 1)
     
-        self.train_data.images = self.train_data.images.astype('float32')
-        self.val_data.images = self.val_data.images.astype('float32')
-        self.test_data.images = self.test_data.images.astype('float32')
+        self.train_data = self.train_data.astype('float32')
+        self.val_data = self.val_data.astype('float32')
+        self.test_data = self.test_data.astype('float32')
         
-        self.train_data.images /= 255
-        self.val_data.images /= 255
-        self.test_data.images /= 255
         
         
