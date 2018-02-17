@@ -23,7 +23,7 @@ SEED = 12
 class CNN(NeuralNetwork):
     """Convolutional Neural Network - 2 hidden layers (for now) """
 
-    def __init__(self, input_side=28, input_channels=1, non_linearity='sigmoid', conv1_ch=32, conv2_ch=64, **kwargs):
+    def __init__(self, input_side=28, input_channels=1, non_linearity='sigmoid', conv1_ch=32, conv2_ch=32, **kwargs):
         """
         Params:
         input_side(int): size of the y-axis. We are assuming x = y 
@@ -91,15 +91,20 @@ class CNN(NeuralNetwork):
         Desc:
             Create input place holders for graph and model.
         """
+        input_shape_all = (None,self.input_side, self.input_side,1)
+        label_shape_all = (None,self.num_classes)
         input_placeholder = tf.placeholder(
             tf.float32, 
-            shape=(None, self.input_dim, self.input_dim, 1),
+            shape=input_shape_all,
             name='input_placeholder')
         labels_placeholder = tf.placeholder(
             tf.int32,             
-            shape=(None,self.num_classes),
+            shape=label_shape_all,
             name='labels_placeholder')
-        return input_placeholder, labels_placeholder
+        input_shape_one = (1,self.input_side, self.input_side,1)
+        label_shape_one = (1,self.num_classes)
+        
+        return input_placeholder, labels_placeholder, input_shape_one, label_shape_one
     
     
     def get_logits_preds(self, inputs):
@@ -111,6 +116,7 @@ class CNN(NeuralNetwork):
         logits, = preds.op.inputs #inputs to the softmax operation
         return logits, preds
     
+        
     def compile_model(self):
         """
         Initialize the model
@@ -133,12 +139,8 @@ class CNN(NeuralNetwork):
         json_file = open(load_path_model, 'r')
         loaded_model_json = json_file.read()
         json_file.close()
-        self.model = model_from_json(loaded_model_json)
         # load weights into new model
         self.model.load_weights(load_path_weights)
-        self.model.compile(loss='categorical_crossentropy',
-              optimizer='adadelta',
-              metrics=['accuracy'])
         print("Loaded model from disk")
         
     def reshape_data(self):

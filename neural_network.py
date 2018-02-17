@@ -6,6 +6,8 @@ from tensorflow import gradients
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
 from tensorflow.examples.tutorials.mnist import input_data
+from tqdm import tqdm
+
 
 import numpy as np
 import os, time, math
@@ -14,6 +16,7 @@ from keras import backend as K
 from keras.models import Sequential
 
 import influence.util as util
+import psutil
 
 SEED = 12
 
@@ -60,8 +63,8 @@ class NeuralNetwork(object):
          
         # Initialize Tf and Keras
         gpu_options = tf.GPUOptions(allow_growth=True)
-        sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
-        K.set_session(sess)
+        self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
+        K.set_session(self.sess)
        
         #Dropout and L2 reg hyperparams
         self.beta = 0.01
@@ -69,13 +72,18 @@ class NeuralNetwork(object):
         
         
         #Setup Input Placeholders required for forward pass, implemented by child classes (eg: CNN or FCN)
-        self.input_placeholder, self.labels_placeholder = self.create_input_placeholders() 
-        
+        self.input_placeholder, self.labels_placeholder, self.input_shape, self.label_shape = self.create_input_placeholders() 
                 
         # Setup model operation implemented by child classes
         self.model = self.create_model()
         self.logits, self.preds = self.get_logits_preds(self.input_placeholder)
         self.params = self.get_params()
+        
+        num_params = 0
+        for j in range(len(self.params)):
+            num_params = num_params + int(np.product(self.params[j].shape))
+        self.num_params = num_params
+        
 
         # Setup loss 
         self.training_loss = self.get_loss_op(self.logits, self.labels_placeholder)
@@ -117,15 +125,15 @@ class NeuralNetwork(object):
         print_iter = recursion_depth / 10
 
         for i in range(num_samples):
-            samples = np.random.choice(len(self.train_data.images), size=recursion_depth)
+            samples = np.random.choice(len(self.train_data), size=recursion_depth)
            
             cur_estimate = v
 
             for j in range(recursion_depth):
            
-                batch_xs= self.train_data.images[samples[j],:].reshape(1,-1)
-                batch_ys = self.train_data.labels[samples[j]].reshape(-1)
-                feed_dict = {self.input_placeholder: batch_xs, self.labels_placeholder: batch_ys}
+                batch_xs= self.train_data[samples[j],:].reshape(self.input_shape)
+                batch_ys = self.train_labels[samples[j]].reshape(self.label_shape)
+                feed_dict = {self.input_placeholder: batch_xs, self.labels_placeholder: batch_ys, K.learning_phase(): 0}
                 feed_dict = self.update_feed_dict_with_v_placeholder(feed_dict, cur_estimate)
                 
                 
@@ -145,6 +153,7 @@ class NeuralNetwork(object):
                 inverse_hvp = [a + b/scale for (a, b) in zip(inverse_hvp, cur_estimate)]  
 
         inverse_hvp = [a/num_samples for a in inverse_hvp]
+       
         return inverse_hvp 
         
 
@@ -160,12 +169,13 @@ class NeuralNetwork(object):
         
         """
         #Fill the feed dict with the training example 
-        input_feed = train_image.reshape(1, -1)
-        labels_feed = train_label.reshape(-1)
+        input_feed = train_image.reshape(self.input_shape)
+        labels_feed = train_label.reshape(self.label_shape)
         
         feed_dict = {
             self.input_placeholder: input_feed,
             self.labels_placeholder: labels_feed,
+            K.learning_phase(): 0
         } 
                 
         grad_loss_wrt_train_input = self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict)   
@@ -181,6 +191,36 @@ class NeuralNetwork(object):
         out = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels)
         return out
     
+    def get_gradients_wrt_params(self, X, Y):
+        """Get gradients of Loss(X,Y) wrt network params"""
+        
+        num_params = self.num_params
+        inp_size = X.shape[0]
+        gradient = np.zeros((inp_size, num_params), dtype=np.float32)
+        
+        
+        #Get one gradient at a time
+        for i in range(inp_size):
+            grad = self.sess.run(
+                    self.grad_loss_wrt_param,
+                    feed_dict={
+                        self.input_placeholder: X[i].reshape(self.input_shape),                    
+                        self.labels_placeholder: Y[i].reshape(self.label_shape),
+                        K.learning_phase(): 0
+                        }
+                    )
+            temp = np.array([])
+            for j in range(len(grad)):
+                layer_size = np.prod(grad[j].shape) 
+                temp = np.concatenate((temp, np.reshape(grad[j], (layer_size))), axis=0)
+        
+            gradient[i,:] = temp
+            #if i%1000 == 0:
+                #os.system('nvidia-smi')
+                #print(psutil.cpu_percent())
+                #print (psutil.virtual_memory())
+        return gradient
+    
     def get_adversarial_version(self, x, y, eps=0.3):
         """
         Desc:
@@ -189,12 +229,30 @@ class NeuralNetwork(object):
         """
         
         feed_dict = {
-            self.input_placeholder: x.reshape(1,-1),
-            self.labels_placeholder: y.reshape(-1),
+            self.input_placeholder: x.reshape(self.input_shape),
+            self.labels_placeholder: y.reshape(self.label_shape),
+            K.learning_phase(): 0
         } 
         grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
         x_adv = x + eps*np.sign(grad)
         return x_adv
+    
+    def get_random_version(self, x, y, eps=0.3):
+        """
+        Desc:
+            Caclulate the adversarial version for point x using FGSM
+        
+        """
+        
+        feed_dict = {
+            self.input_placeholder: x.reshape(self.input_shape),
+            self.labels_placeholder: y.reshape(self.label_shape),
+            K.learning_phase(): 0
+        } 
+        
+        x_rand = x + eps*np.sign(np.random.uniform(low=-0.01,high=0.01,size=x.shape))
+        return x_rand
+    
     
     def get_inverse_hvp(self, test_point, test_label):
         """
@@ -203,23 +261,35 @@ class NeuralNetwork(object):
         """
         
         #Fill the feed dict with the test example
-        input_feed = test_point.reshape(1,-1) 
-        labels_feed = test_label.reshape(-1)
+        input_feed = test_point.reshape(self.input_shape) 
+        labels_feed = test_label.reshape(self.label_shape)
         
         feed_dict = {
             self.input_placeholder: input_feed,
             self.labels_placeholder: labels_feed,
+            K.learning_phase(): 0
         }
 
         v = self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict)
         
-        if (np.linalg.norm(np.concatenate(v))) == 0.0:
+        v_= np.array([])
+        for j in range(len(v)):
+            layer_size = np.prod(v[j].shape) 
+            v_ = np.concatenate((v_, np.reshape(v[j], (layer_size))), axis=0)
+        
+        
+        if (np.linalg.norm(v_)) == 0.0:
             print ('Error: Loss was 0.0 at test point %d' % test_idx)
             return
         
         
         inverse_hvp = self.get_inverse_hvp_lissa(v)
-        return inverse_hvp
+        inverse_hvp_ = np.array([])
+        for j in range(len(inverse_hvp)):
+            layer_size = np.prod(inverse_hvp[j].shape) 
+            inverse_hvp_ = np.concatenate((inverse_hvp_, np.reshape(inverse_hvp[j], (layer_size))), axis=0)
+            
+        return inverse_hvp_
     
     def train(self, epochs):
         """
@@ -248,7 +318,7 @@ class NeuralNetwork(object):
             feed_dict[pl_block] = vec_block  
         return feed_dict
 
-    def evaluate_influence_matrix(self, test_classes=[], train_classes=[], num_test_samples=10, use_adv_sample=False, use_adv_label=False, save_path='inf_matrix.dat', verbose=True):
+    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_test_samples=10,num_train_samples=1000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',seed=SEED,verbose=True):
         """
             Desc:
                 Calculate influence matrix of training points on test points.
@@ -262,56 +332,69 @@ class NeuralNetwork(object):
           @return:
               influence_matrix: matrix of size test_classes x train_classes 
         """
-
-        if test_classes == []:
-            #Matrix of form num_classes x num_classes, where ij represent influence of training points from
-            #class j on test points from class i
-            if train_classes == []:
-                influence_matrix = np.zeros((self.num_classes, self.num_classes)) 
-                train_classes = range(0,self.num_classes)
-            else:
-                influence_matrix = np.zeros((self.num_classes, len(train_classes)))
         
-            test_classes = range(0,self.num_classes)
+        print ('Getting gradients...')
+        #Get training gradients
+        if use_grad_matrix:
+            train_gradients = np.load(grad_matrix_path)
+        
         else:
-            if train_classes == []:
-                influence_matrix = np.zeros((len(test_classes), self.num_classes))
-                train_classes = range(0,self.num_classes)
-            else:
-                influence_matrix = np.zeros((len(test_classes), len(train_classes)))
+            np.random.seed(seed)
+            random_data_indices = np.random.choice(range(0,self.train_data.shape[0]), num_train_samples)
+            random_train_data = self.train_data[random_data_indices]
+            random_train_labels = self.train_labels[random_data_indices]
+            train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
         
+        print ('Computed gradients. Saving to file')
+        if grad_save_path != '':
+            np.save(grad_save_path, train_gradients)    # .npy extension is added if not given
+          
        
-        #Get number of samples per class
-        samples_per_class = dict()
-
-        #Stores number of samples per class in order to average over influence
-        for c_ in train_classes:
-            total_c_samples = np.sum(np.argmax(self.train_data.labels, axis=1) == c_)
-            samples_per_class[c_] = float(total_c_samples)
-
-        #Perform calculation for every class
-        for cdx, c in enumerate(test_classes):
-            #Get all data points from class and pick a random subset of test points
-            data_points = np.where(np.argmax(self.test_data.labels, axis=1) == c)[0]
-            test_class_indices = np.random.choice(data_points, num_test_samples)
-        
-            #Store results of influence for this test class
-            inf_on_test_class = np.zeros((len(train_classes)))
-        
+        print ('Saved gradients.\nGetting Inverse HVP for test points')
+        #Perform influence calculation by loading hvp matrix or calculating it
+        if use_hvp_matrix:
+            hvp_matrix = np.load(hvp_matrix_path)
+        else:
+            hvp_matrix = np.zeros((num_test_samples*self.num_classes, self.num_params))
+            
+            #We will sample num_samples for each class
+            test_indices = list()
+            
+            np.random.seed(seed)
+            for c in range(self.num_classes):
+                test_class_indices = np.random.choice(np.where(np.argmax(self.test_labels,axis=1) == c)[0], num_test_samples)
+                test_indices[c*10:c*10+10] = test_class_indices[:]
+            
             #Iterate over test points for the current class 
-            for test_idx in test_class_indices:
-                test_image = self.test_data.images[test_idx]
-                test_label = self.test_data.labels[test_idx]
+            for s_idx, test_idx in enumerate(test_indices):
+                test_image = self.test_data[test_idx]
+                test_label = self.test_labels[test_idx]
                 
                 #Convert to adversarial sample
                 if use_adv_sample == True:
                     test_image = self.get_adversarial_version(test_image, test_label)
+                    
+                        
+                #Convert to random sample
+                if use_rand_sample == True:
+                    test_image = self.get_random_version(test_image, test_label)
                 
-                feed_dict = {self.input_placeholder: test_image.reshape(1,-1), self.labels_placeholder: test_label.reshape(-1)}
-                test_pred = self.sess.run(self.preds, feed_dict=feed_dict)[0]
+                test_pred = self.model.predict(test_image.reshape(self.input_shape))[0]
                 
                 #Use adversarial prediction as a label in calculating the Inverse HVP (s_test)
                 if use_adv_label == True:
+                    pred_idx = np.argmax(test_pred)
+                    test_label = np.zeros(test_pred.shape)
+                    test_label[pred_idx] = 1.0
+                        
+                #Use random label
+                if use_rand_label == True:
+                    pred_idx = np.argmax(test_pred)
+                    test_label = np.zeros(test_pred.shape)
+                    test_label[pred_idx] = 1.0
+                
+                #use predicted label
+                if use_reg_label == True:
                     pred_idx = np.argmax(test_pred)
                     test_label = np.zeros(test_pred.shape)
                     test_label[pred_idx] = 1.0
@@ -322,48 +405,28 @@ class NeuralNetwork(object):
                 #Calculate the Inverse HVP for this test point
                 inverse_hvp = self.get_inverse_hvp(test_image, test_label)
                 
-                #Evaluate influence on the test point for each training class 
-                for c_dx, c_ in enumerate(train_classes):
-                    train_class_indices = list(np.where(np.argmax(self.train_data.labels, axis=1) == c_)[0])
-                    train_class_inf_on_pt = 0.0
-                    max_inf = 0.0
-                    min_inf = 0.0
-                    max_idx = 0
-                    #Iterate over all training points for current training class
-                    for train_idx in train_class_indices:
-                        train_image = self.train_data.images[train_idx]                        
-                        train_label = self.train_data.labels[train_idx]
-                    
-                        inf = self.get_influence_on_test_loss(train_image, train_label, inverse_hvp)
-                        train_class_inf_on_pt += inf
-                        if inf > max_inf:
-                            max_inf = inf
-                            max_idx = train_idx
-                        if inf < min_inf:
-                            min_inf = inf
-                            min_idx = train_idx
+                hvp_matrix[s_idx,:] = inverse_hvp
                 
-                    #Update influence of train class on test point
-                    inf_on_test_class[c_dx] += train_class_inf_on_pt / samples_per_class[c_]
-                    
-                    if verbose:  
-                        print ('Test Idx: %d, Test Label: %d, Test Pred: %d, Train Class: %d, Avg Inf: %.8f, Max Inf: %.8f, Max Idx: %d, Min Inf: %.8f, Min Idx: %d' % (test_idx, test_lb, test_pred, c_, inf_on_test_class[c_dx], max_inf, max_idx, min_inf, min_idx))
-                
-            #Divide influence by number of test samples to get average influence on test class
-            inf_on_test_class /= float(num_test_samples)
+            print ('Done Inverse HVP.\nComputing influence\n')   
             
-            #Update influence matrix
-            influence_matrix[cdx,:] = inf_on_test_class[:]
-    
+            #Perform dot product for influence
+            inf_matrix = np.dot(hvp_matrix, train_gradients.T)
+            
+            print ('Done computing Influence.\nSaving matrices')
 
         #Save results
-        influence_matrix.tofile(save_path)
-        return influence_matrix
-    
-    def evaluate_similarity_matrix(self, test_classes=[], train_classes=[], num_test_samples=10, use_adv_sample=False, use_adv_label=False, save_path='sim_matrix.dat', verbose=True):
+        if inf_save_path != '':
+            np.save(inf_save_path, inf_matrix)
+        if hvp_save_path != '':
+            np.save(hvp_save_path, hvp_matrix)
+        print ('Saved matrices')
+            
+        return inf_matrix, hvp_matrix, train_gradients
+ 
+    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_test_samples=10,num_train_samples=1000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, sim_save_path='', train_grad_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='',seed=SEED,verbose=True):
         """
             Desc:
-                Calculate similarity between gradient of loss wrt of test_classes and gradient of loss wrt train classes
+                Calculate similarity matrix of training points on test points.
             Params:
               test_classes(list): List containing test classses for which to calculate influence for
               train_classes(list): List containing training classes used for calculating infuence on each element of test_classes
@@ -374,320 +437,105 @@ class NeuralNetwork(object):
           @return:
               similarity_matrix: matrix of size test_classes x train_classes 
         """
-
-        if test_classes == []:
-            #Matrix of form num_classes x num_classes, where ij represent influence of training points from
-            #class j on test points from class i
-            if train_classes == []:
-                similarity_matrix = np.zeros((self.num_classes, self.num_classes)) 
-                train_classes = range(0,self.num_classes)
-            else:
-                similarity_matrix = np.zeros((self.num_classes, len(train_classes)))
         
-            test_classes = range(0,self.num_classes)
-        else:
-            if train_classes == []:
-                similarity_matrix = np.zeros((len(test_classes), self.num_classes))
-                train_classes = range(0,self.num_classes)
-            else:
-                similarity_matrix = np.zeros((len(test_classes), len(train_classes)))
+        print ('Getting gradients for training points...')
+        #Get training gradients
+        if use_train_grad_matrix:
+            train_gradients = np.load(train_grad_matrix_path)
         
+        else:     
+            np.random.seed(seed)
+            random_data_indices = np.random.choice(range(0,self.train_data.shape[0]), num_train_samples)
+            random_train_data = self.train_data[random_data_indices]
+            random_train_labels = self.train_labels[random_data_indices]
+            train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
+        
+        print ('Computed gradients. Saving to file')
+        if train_grad_save_path != '':
+            np.save(train_grad_save_path, train_gradients)
        
-        #Get number of samples per class
-        samples_per_class = dict()
-
-        #Stores number of samples per class in order to average over influence
-        for c_ in train_classes:
-            total_c_samples = np.sum(np.argmax(self.train_data.labels, axis=1) == c_)
-            samples_per_class[c_] = float(total_c_samples)
-
-        #Perform calculation for every class
-        for cdx, c in enumerate(test_classes):
-            #Get all data points from class and pick a random subset of test points
-            data_points = np.where(np.argmax(self.test_data.labels, axis=1) == c)[0]
-            test_class_indices = np.random.choice(data_points, num_test_samples)
+        print ('Saved gradients.\nGetting gradients for test points')
         
-            #Store results of influence for this test class
-            sim_with_test_class = np.zeros((len(train_classes)))
+        if use_test_grad_matrix:
+            test_gradients = np.load(test_grad_matrix_path)
         
+        else:
+            
+            #Perturb test points or get their predicted label
+            test_points = np.zeros(( [num_test_samples*self.num_classes] +  list(self.test_data.shape[1:]) ))
+            test_labels = np.zeros((num_test_samples*self.num_classes, self.test_labels.shape[1]))
+            
+            #We will sample num_samples for each class
+            test_indices = list()
+            
+            np.random.seed(seed)
+            for c in range(self.num_classes):
+                test_class_indices = np.random.choice(np.where(np.argmax(self.test_labels,axis=1) == c)[0], num_test_samples)
+                test_indices[c*10:c*10+10] = test_class_indices[:]
+            
             #Iterate over test points for the current class 
-            for test_idx in test_class_indices:
-                test_image = self.test_data.images[test_idx]
-                test_label = self.test_data.labels[test_idx]
+            for s_idx, test_idx in enumerate(test_indices):
+                
+                test_image = self.test_data[test_idx]
+                test_label = self.test_labels[test_idx]
                 
                 #Convert to adversarial sample
                 if use_adv_sample == True:
                     test_image = self.get_adversarial_version(test_image, test_label)
+                    
+
+
+                #Convert to random sample
+                if use_rand_sample == True:
+                    test_image = self.get_random_version(test_image, test_label)
                 
-                feed_dict = {self.input_placeholder: test_image.reshape(1,-1), self.labels_placeholder: test_label.reshape(-1)}
-                test_pred = self.sess.run(self.preds, feed_dict=feed_dict)[0]
+                    
+                test_pred = self.model.predict(test_image.reshape(self.input_shape))[0]
+                
                 
                 #Use adversarial prediction as a label in calculating the Inverse HVP (s_test)
                 if use_adv_label == True:
                     pred_idx = np.argmax(test_pred)
                     test_label = np.zeros(test_pred.shape)
                     test_label[pred_idx] = 1.0
-            
-                    feed_dict = {self.input_placeholder: test_image.reshape(1,-1), self.labels_placeholder: test_label.reshape(-1)}
+                        
+                #Use random label
+                if use_rand_label == True:
+                    pred_idx = np.argmax(test_pred)
+                    test_label = np.zeros(test_pred.shape)
+                    test_label[pred_idx] = 1.0
+                    
+                #Use predicted label
+                if use_reg_label == True:
+                    pred_idx = np.argmax(test_pred)
+                    test_label = np.zeros(test_pred.shape)
+                    test_label[pred_idx] = 1.0
                 
                 test_pred = np.argmax(test_pred)
+                
                 test_lb = np.argmax(test_label)
             
-                #Calculate gradient of loss wrt this test sample
-                grad_loss_wrt_test = np.concatenate(self.sess.run(self.grad_loss_wrt_param , feed_dict=feed_dict))
+                test_points[s_idx,:] = test_image
+                test_labels[s_idx,:] = test_label[:]
 
-                #Evaluate the gradient vectors for all training classes in question
-                for c_dx, c_ in enumerate(train_classes):
-                    train_class_indices = list(np.where(np.argmax(self.train_data.labels, axis=1) == c_)[0])
-                    avg_sim = 0.0
-                    max_sim = 0.0
-                    min_sim = 0.0
-                    max_idx = 0
-                    min_idx = 0
-                    #Iterate over all training points for current training class
-                    for train_idx in train_class_indices:
-                        train_image = self.train_data.images[train_idx]                        
-                        train_label = self.train_data.labels[train_idx]
-                    
-                        feed_dict = {self.input_placeholder: train_image.reshape(1,-1), self.labels_placeholder: train_label.reshape(-1)}
-                        grad_loss_wrt_train = np.concatenate(self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict))
-                        curr_sim = np.dot(grad_loss_wrt_train, grad_loss_wrt_test)
-                        
-                        if curr_sim > max_sim:
-                            max_sim = curr_sim
-                            max_idx = train_idx
-                        if curr_sim < min_sim:
-                            min_sim = curr_sim
-                            min_idx = train_idx
-                               
-                        avg_sim += curr_sim
                 
-                    #Update similarity of train class with test point
-                    sim_with_test_class[c_dx] += avg_sim / samples_per_class[c_]
-                    
-                    if verbose:  
-                        print ('Test Idx: %d, Test Label: %d, Test Pred: %d, Train Class: %d, Avg Sim: %.8f, Max Sim: %.8f, Max Sim Idx: %d, Min Sim: %.8f, Min Idx: %d' % (test_idx, test_lb, test_pred, c_, sim_with_test_class[c_dx], max_sim, max_idx, min_sim, min_idx))
-
-            #Divide similarity with number of test samples to get average similarity on test class
-            sim_with_test_class /= float(num_test_samples)
+            test_gradients = np.array(self.get_gradients_wrt_params(test_points, test_labels))
             
-            #Update influence matrix
-            similarity_matrix[cdx,:] = sim_with_test_class[:]
-    
+            print ('Done computing test gradients.\nComputing similarity')   
+            
+            #Perform dot product
+            sim_matrix = np.dot(test_gradients, train_gradients.T)
+                
+            print ('Done similarity.\nSaving matrices')
 
         #Save results
-        similarity_matrix.tofile(save_path)
-        return similarity_matrix
-    
-    def evaluate_similarity_matrix_mod(self, test_classes=[], train_classes=[], num_test_samples=10, use_adv_sample=True, use_adv_label=False, save_path='mod_sim_matrix.dat', verbose=True):
-        """
-            Desc:
-                Calculate similarity between gradient of loss wrt of test_classes and gradient of loss wrt train classes
-            Params:
-              test_classes(list): List containing test classses for which to calculate influence for
-              train_classes(list): List containing training classes used for calculating infuence on each element of test_classes
-              num_test_samples(int): number of test samples to use per class
-              use_adv_sample(bool): Convert samples to adversarial using FGSM if true
-              use_adv_label(bool): Treat network prediction on adversarial sample as the True label while calculating influence
-              
-          @return:
-              similarity_matrix: matrix of size test_classes x train_classes 
-        """
-
+        if sim_save_path != '':
+            np.save(sim_save_path, sim_matrix)
+        if test_grad_save_path != '':
+            np.save(test_grad_save_path,test_gradients)
         
-        train_classes = range(0,self.num_classes)
-        test_classes = range(0,self.num_classes)
-        similarity_matrix = np.zeros((len(test_classes), len(train_classes), len(test_classes) ))
-        
-       
-        #Get number of samples per class
-        samples_per_class = dict()
-
-        #Stores number of samples per class in order to average over influence
-        for c_ in train_classes:
-            total_c_samples = np.sum(np.argmax(self.train_data.labels, axis=1) == c_)
-            samples_per_class[c_] = float(total_c_samples)
-
-        #Perform calculation for every class
-        for cdx, c in enumerate(test_classes):
-            #Get all data points from class and pick a random subset of test points
-            data_points = np.where(np.argmax(self.test_data.labels, axis=1) == c)[0]
-            test_class_indices = np.random.choice(data_points, num_test_samples)
-        
-            #Store results of influence for this test class
-            sim_with_test_class = np.zeros((len(train_classes), len(train_classes)))
-        
-            #Iterate over test points for the current class 
-            for test_idx in test_class_indices:
-                test_image = self.test_data.images[test_idx]
-                test_label = self.test_data.labels[test_idx]
-                
-                #Convert to adversarial sample
-                if use_adv_sample == True:
-                    #test_image = self.get_adversarial_version(test_image, test_label)
-                    gt = np.argmax(test_label)
-                    for cc in range(10):
-                        test_label[:] = 0.0
-                        test_label[cc] = 1.0
-                        feed_dict = {self.input_placeholder: test_image.reshape(1,-1), self.labels_placeholder: test_label.reshape(-1)}
-                        test_pred = self.sess.run(self.preds, feed_dict=feed_dict)[0]
-                
-                
-                        test_pred = np.argmax(test_pred)
-                        test_lb = np.argmax(test_label)
+        print ('Done saving matrices.')
             
-                        #Calculate inverse hvp
-                        grad_loss_wrt_test = np.concatenate(self.sess.run(self.grad_loss_wrt_param , feed_dict=feed_dict))
-
-                        #Evaluate the gradient vectors for all training classes in question
-                        for c_dx, c_ in enumerate(train_classes):
-                            train_class_indices = list(np.where(np.argmax(self.train_data.labels, axis=1) == c_)[0])
-                            avg_sim = 0.0
-                            max_sim = 0.0
-                            min_sim = 0.0
-                            max_idx = 0
-                            min_idx = 0
-                            #Iterate over all training points for current training class
-                            for train_idx in train_class_indices:
-                                train_image = self.train_data.images[train_idx]                        
-                                train_label = self.train_data.labels[train_idx]
-                    
-                                feed_dict = {self.input_placeholder: train_image.reshape(1,-1), self.labels_placeholder: train_label.reshape(-1)}
-                                grad_loss_wrt_train = np.concatenate(self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict))
-                                sim = np.dot(grad_loss_wrt_train, grad_loss_wrt_test)
-                                
-                        
-                                if sim > max_sim:
-                                    max_sim = sim
-                                    max_idx = train_idx
-                                if sim < min_sim:
-                                    min_sim = sim
-                                    min_idx = train_idx
-                               
-                                avg_sim += sim
-                
-                            #Update similarity of train class with test point
-                            sim_with_test_class[cc, c_dx] += avg_sim / samples_per_class[c_]
-                    
-                            if verbose:  
-                                print ('Test Class: %d, Test Label: %d, Test Pred: %d, Train Class: %d, Grad Class: %d, Avg Sim: %.8f, Max Sim: %.8f, Max Sim Idx: %d, Min Sim: %.8f, Min Idx: %d' % (test_idx, test_lb, test_pred, c_, cc, sim_with_test_class[cc, c_dx], max_sim, max_idx, min_sim, min_idx))
-
-            #Divide similarity with number of test samples to get average similarity on test class
-            sim_with_test_class /= float(num_test_samples)
-            
-            #Update influence matrix
-            similarity_matrix[cdx,:, :] = sim_with_test_class
+        return sim_matrix, test_gradients, train_gradients
     
-
-        #Save results
-        similarity_matrix.tofile(save_path)
-        return similarity_matrix
-
-    def evaluate_influence_matrix_mod(self, test_classes=[], train_classes=[], num_test_samples=10, use_adv_sample=True, use_adv_label=False, save_path='mod_inf_matrix.dat', verbose=True):
-        """
-            Desc:
-                Calculate similarity between gradient of loss wrt of test_classes and gradient of loss wrt train classes
-            Params:
-              test_classes(list): List containing test classses for which to calculate influence for
-              train_classes(list): List containing training classes used for calculating infuence on each element of test_classes
-              num_test_samples(int): number of test samples to use per class
-              use_adv_sample(bool): Convert samples to adversarial using FGSM if true
-              use_adv_label(bool): Treat network prediction on adversarial sample as the True label while calculating influence
-              
-          @return:
-              similarity_matrix: matrix of size test_classes x train_classes 
-        """
-
-        
-        train_classes = range(0,self.num_classes)
-        test_classes = range(0,self.num_classes)
-        influence_matrix = np.zeros((len(test_classes), len(train_classes), len(test_classes) ))
-        
-       
-        #Get number of samples per class
-        samples_per_class = dict()
-
-        #Stores number of samples per class in order to average over influence
-        for c_ in train_classes:
-            total_c_samples = np.sum(np.argmax(self.train_data.labels, axis=1) == c_)
-            samples_per_class[c_] = float(total_c_samples)
-
-        #Perform calculation for every class
-        for cdx, c in enumerate(test_classes):
-            #Get all data points from class and pick a random subset of test points
-            data_points = np.where(np.argmax(self.test_data.labels, axis=1) == c)[0]
-            test_class_indices = np.random.choice(data_points, num_test_samples)
-        
-            #Store results of influence for this test class
-            inf_with_test_class = np.zeros((len(train_classes), len(train_classes)))
-        
-            #Iterate over test points for the current class 
-            for test_idx in test_class_indices:
-                test_image = self.test_data.images[test_idx]
-                test_label = self.test_data.labels[test_idx]
-                
-                #Convert to adversarial sample
-                if use_adv_sample == True:
-                    test_image = self.get_adversarial_version(test_image, test_label)
-                    gt = np.argmax(test_label)
-                    for cc in range(10):
-                        test_label[:] = 0.0
-                        test_label[cc] = 1.0
-                        feed_dict = {self.input_placeholder: test_image.reshape(1,-1), self.labels_placeholder: test_label.reshape(-1)}
-                        test_pred = self.sess.run(self.preds, feed_dict=feed_dict)[0]
-                
-                
-                        test_pred = np.argmax(test_pred)
-                        test_lb = np.argmax(test_label)
-            
-                        #Calculate inverse hvp
-                        inverse_hvp = self.get_inverse_hvp(test_image, test_label)
-
-                        #Evaluate the gradient vectors for all training classes in question
-                        for c_dx, c_ in enumerate(train_classes):
-                            train_class_indices = list(np.where(np.argmax(self.train_data.labels, axis=1) == c_)[0])
-                            avg_inf = 0.0
-                            max_inf = 0.0
-                            min_inf = 0.0
-                            max_idx = 0
-                            min_idx = 0
-                            #Iterate over all training points for current training class
-                            for train_idx in train_class_indices:
-                                train_image = self.train_data.images[train_idx]                        
-                                train_label = self.train_data.labels[train_idx]
-                    
-                                feed_dict = {self.input_placeholder: train_image.reshape(1,-1), self.labels_placeholder: train_label.reshape(-1)}
-                                inf = self.get_influence_on_test_loss(train_image, train_label, inverse_hvp)
-                                
-                        
-                                if inf > max_inf:
-                                    max_inf = inf
-                                    max_idx = train_idx
-                                if inf < min_inf:
-                                    min_inf = inf
-                                    min_idx = train_idx
-                               
-                                avg_inf += inf
-                
-                            #Update similarity of train class with test point
-                            inf_with_test_class[cc, c_dx] += avg_inf / samples_per_class[c_]
-                    
-                            if verbose:  
-                                print ('Test Class: %d, Test Label: %d, Test Pred: %d, Train Class: %d, Grad Class: %d, Avg Inf: %.8f, Max Inf: %.8f, Max Inf Idx: %d, Min Inf: %.8f, Min Idx: %d' % (test_idx, test_lb, test_pred, c_, cc, inf_with_test_class[cc, c_dx], max_inf, max_idx, min_inf, min_idx))
-
-            #Divide similarity with number of test samples to get average similarity on test class
-            inf_with_test_class /= float(num_test_samples)
-            
-            #Update influence matrix
-            influence_matrix[cdx,:, :] = inf_with_test_class
-    
-
-        #Save results
-        influence_matrix.tofile(save_path)
-        return influence_matrix
-    
-    
-    
-    
-    
-    
+  

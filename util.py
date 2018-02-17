@@ -2,8 +2,8 @@ from tensorflow import gradients
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
 
-import matplotlib
-import matplotlib.pyplot as plt
+#import matplotlib
+#import matplotlib.pyplot as plt
 
 
 def hessian_vector_product(ys, xs, v):
@@ -58,7 +58,7 @@ def hessian_vector_product(ys, xs, v):
       for x, grad_elem in zip(xs, grads_with_none)]
   
   return return_grads
-
+"""
 def visualize(image):
     image = image.reshape(28,28,1)
     plt.figure(figsize=(1, 1))
@@ -70,4 +70,4 @@ def visualize(image):
         # image is in color
         plt.imshow(image)
     plt.axis('off')
-    plt.show()
+    plt.show()"""
