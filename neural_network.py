@@ -318,7 +318,7 @@ class NeuralNetwork(object):
             feed_dict[pl_block] = vec_block  
         return feed_dict
 
-    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_test_samples=10,num_train_samples=1000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',seed=SEED,verbose=True):
+    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_test_samples=10,num_train_samples=10000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',seed=SEED,verbose=True):
         """
             Desc:
                 Calculate influence matrix of training points on test points.
@@ -407,12 +407,12 @@ class NeuralNetwork(object):
                 
                 hvp_matrix[s_idx,:] = inverse_hvp
                 
-            print ('Done Inverse HVP.\nComputing influence\n')   
+        print ('Done Inverse HVP.\nComputing influence\n')   
             
-            #Perform dot product for influence
-            inf_matrix = np.dot(hvp_matrix, train_gradients.T)
+        #Perform dot product for influence
+        inf_matrix = np.dot(hvp_matrix, train_gradients.T)
             
-            print ('Done computing Influence.\nSaving matrices')
+        print ('Done computing Influence.\nSaving matrices')
 
         #Save results
         if inf_save_path != '':
@@ -423,7 +423,7 @@ class NeuralNetwork(object):
             
         return inf_matrix, hvp_matrix, train_gradients
  
-    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_test_samples=10,num_train_samples=1000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, sim_save_path='', train_grad_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='',seed=SEED,verbose=True):
+    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_test_samples=10,num_train_samples=10000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, sim_save_path='', train_grad_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='',seed=SEED,verbose=True):
         """
             Desc:
                 Calculate similarity matrix of training points on test points.
@@ -521,12 +521,12 @@ class NeuralNetwork(object):
                 
             test_gradients = np.array(self.get_gradients_wrt_params(test_points, test_labels))
             
-            print ('Done computing test gradients.\nComputing similarity')   
+        print ('Done computing test gradients.\nComputing similarity')   
             
-            #Perform dot product
-            sim_matrix = np.dot(test_gradients, train_gradients.T)
+        #Perform dot product
+        sim_matrix = np.dot(test_gradients, train_gradients.T)
                 
-            print ('Done similarity.\nSaving matrices')
+        print ('Done similarity.\nSaving matrices')
 
         #Save results
         if sim_save_path != '':
