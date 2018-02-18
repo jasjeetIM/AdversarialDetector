@@ -6,17 +6,14 @@ from tensorflow import gradients
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
 from tensorflow.examples.tutorials.mnist import input_data
-from tqdm import tqdm
-
+from cleverhans.utils_keras import KerasModelWrapper
+from cleverhans.attacks import CarliniWagnerL2
 
 import numpy as np
 import os, time, math
 from keras import backend as K
-
 from keras.models import Sequential
-
 import influence.util as util
-import psutil
 
 SEED = 12
 
@@ -143,13 +140,11 @@ class NeuralNetwork(object):
 
                 # Update: v + (I - Hessian_at_x) * cur_estimate
                 if (j % print_iter == 0) or (j == recursion_depth - 1):
-                    #print("Recursion at depth %s: norm is %.8lf" % (j, np.linalg.norm(np.concatenate(cur_estimate))))
                     feed_dict = self.update_feed_dict_with_v_placeholder(feed_dict, cur_estimate)
 
             if inverse_hvp is None:
                 inverse_hvp = [b/scale for b in cur_estimate]
             else:
-                
                 inverse_hvp = [a + b/scale for (a, b) in zip(inverse_hvp, cur_estimate)]  
 
         inverse_hvp = [a/num_samples for a in inverse_hvp]
@@ -215,41 +210,54 @@ class NeuralNetwork(object):
                 temp = np.concatenate((temp, np.reshape(grad[j], (layer_size))), axis=0)
         
             gradient[i,:] = temp
-            #if i%1000 == 0:
-                #os.system('nvidia-smi')
-                #print(psutil.cpu_percent())
-                #print (psutil.virtual_memory())
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3):
+    def get_adversarial_version(self, x, y, eps=0.3, attack='FGSM'):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
+            x: matrix of n x input_shape samples
+            y: matrix of n x input_label samples
+            eps: used for FGSM
+            attack: FGMS or CW
         
         """
-        
-        feed_dict = {
-            self.input_placeholder: x.reshape(self.input_shape),
-            self.labels_placeholder: y.reshape(self.label_shape),
-            K.learning_phase(): 0
-        } 
-        grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-        x_adv = x + eps*np.sign(grad)
+        if attack=='FGSM':
+            x_adv = np.zeros_like(x)
+            for i in range(x.shape[0]): 
+                feed_dict = {
+                    self.input_placeholder: x[i].reshape(self.input_shape) ,
+                    self.labels_placeholder: y[i].reshape(self.label_shape),
+                    K.learning_phase(): 0
+                } 
+                grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
+                x_adv[i] = x[i] + eps*np.sign(grad[0])
+            
+        elif attack == 'CW':
+            K.set_learning_phase(0)
+            # Instantiate a CW attack object
+            model = KerasModelWrapper(self.model)
+            cw = CarliniWagnerL2(model, sess=self.sess)
+            yname = 'y'
+            cw_params = {'binary_search_steps': 1,
+                 yname: None,
+                 'max_iterations': 100,
+                 'learning_rate': 0.1,
+                 'batch_size': 1,
+                 'initial_const': 10}
+            x_adv = cw.generate_np(x,**cw_params)
+            
         return x_adv
-    
+        
     def get_random_version(self, x, y, eps=0.3):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
+            x: n x input_shape matrix of samples to perturb
+            y: n x label_shape matrix of labels
+            eps: eps to use for perturbation
         
         """
-        
-        feed_dict = {
-            self.input_placeholder: x.reshape(self.input_shape),
-            self.labels_placeholder: y.reshape(self.label_shape),
-            K.learning_phase(): 0
-        } 
-        
         x_rand = x + eps*np.sign(np.random.uniform(low=-0.01,high=0.01,size=x.shape))
         return x_rand
     
@@ -291,6 +299,53 @@ class NeuralNetwork(object):
             
         return inverse_hvp_
     
+    def generate_perturbed_data(self, x, y, eps=0.3, seed=SEED, perturbation='FGSM'):
+        """
+        Generate a perturbed data set using FGSM, CW, or random uniform noise.
+        x: n x input_shape matrix
+        y: n x input_labels matrix
+        seed: seed to use for reproducing experiments
+        perturbation: FGSM, CW, or Noise.
+        
+        return:
+        x_perturbed: perturbed version of x
+        """
+        if perturbation == 'FGSM':
+            x_perturbed = self.get_adversarial_version(x,y,eps,attack='FGSM')
+            
+        elif perturbation == 'CW':
+            x_perturbed = self.get_adversarial_version(x,y,attack='CW')
+        
+        else:
+            x_perturbed = self.get_random_version(x,y,eps)
+        
+        return x_perturbed
+        
+    
+    def generate_indices_all_classes(self, y=None, seed=SEED, class_=0,num_samples=10):
+        """
+           Generate random indices to be used for sampling points
+           y: n x label_shape matrix containing labels
+           
+        """
+        assert(y)
+        np.random.seed(seed)
+        all_class_indices = list()
+        for c_ in range(self.num_classes):
+            class_indices = self.generate_indices_class(y,class_=class_,num_samples=num_samples) 
+            all_class_indices[c_*num_samples: c_*num_samples+num_samples] = class_indices[:]
+            
+        return all_class_indices
+        
+    def generate_indices_class(self, y=None, class_=0, num_samples=10):
+        """
+        Generate indices for the given class
+        """
+        assert(y)
+        c_indices = np.random.choice(np.where(np.argmax(y,axis=1) == class_)[0], num_samples)
+        return c_indices
+        
+        
     def train(self, epochs):
         """
         Desc:
@@ -318,22 +373,32 @@ class NeuralNetwork(object):
             feed_dict[pl_block] = vec_block  
         return feed_dict
 
-    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_test_samples=10,num_train_samples=10000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',seed=SEED,verbose=True):
+    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_train_samples=1000, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',test_points_path='', test_labels_path='',seed=SEED,verbose=True):
         """
             Desc:
                 Calculate influence matrix of training points on test points.
             Params:
-              test_classes(list): List containing test classses for which to calculate influence for
-              train_classes(list): List containing training classes used for calculating infuence on each element of test_classes
-              num_test_samples(int): number of test samples to use per class
-              use_adv_sample(bool): Convert samples to adversarial using FGSM if true
-              use_adv_label(bool): Treat network prediction on adversarial sample as the True label while calculating influence
+              use_grad_matrix: load up a calculated gradient matrix or create a new matrix
+              use_hvp_matrix: load up a calculated hvp matrix or create a new matrix
+              num_train_samples: number of training samples to use for calculating influence
+              inf_save_path: path to save the influence matrix
+              hvp_save_path: path to save the hvp matrix
+              grad_save_path: path to save the gradient matrix
+              hvp_matrix_path: path to load up a saved hvp matrix
+              grad_matrix_path: path to load up gradients matrix for training points
+              seed: seed to reproduce experiments
+
               
           @return:
-              influence_matrix: matrix of size test_classes x train_classes 
+              influence_matrix: matrix of size test_points x training_points
+              hvp_matrix: test_points x num_params matrix
+              grad_matrix: train_points x num_params matrix
+              
         """
         
-        print ('Getting gradients...')
+        if verbose:
+            print ('Getting gradients...')
+            
         #Get training gradients
         if use_grad_matrix:
             train_gradients = np.load(grad_matrix_path)
@@ -345,100 +410,75 @@ class NeuralNetwork(object):
             random_train_labels = self.train_labels[random_data_indices]
             train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
         
-        print ('Computed gradients. Saving to file')
+        if verbose:
+            print ('Computed gradients. Saving to file')
         if grad_save_path != '':
             np.save(grad_save_path, train_gradients)    # .npy extension is added if not given
           
-       
-        print ('Saved gradients.\nGetting Inverse HVP for test points')
+        if verbose:
+            print ('Saved gradients.\nGetting Inverse HVP for test points')
+            
         #Perform influence calculation by loading hvp matrix or calculating it
         if use_hvp_matrix:
             hvp_matrix = np.load(hvp_matrix_path)
+        
         else:
-            hvp_matrix = np.zeros((num_test_samples*self.num_classes, self.num_params))
+            #We need test points for which to calculate influence
+            assert(os.path.isfile(test_points_path)
+            assert(os.path.isfile(test_labels_path)
+            test_points = np.load(test_points_path)
+            test_labels = np.load(test_labels_path)
             
-            #We will sample num_samples for each class
-            test_indices = list()
-            
-            np.random.seed(seed)
-            for c in range(self.num_classes):
-                test_class_indices = np.random.choice(np.where(np.argmax(self.test_labels,axis=1) == c)[0], num_test_samples)
-                test_indices[c*10:c*10+10] = test_class_indices[:]
-            
-            #Iterate over test points for the current class 
-            for s_idx, test_idx in enumerate(test_indices):
-                test_image = self.test_data[test_idx]
-                test_label = self.test_labels[test_idx]
-                
-                #Convert to adversarial sample
-                if use_adv_sample == True:
-                    test_image = self.get_adversarial_version(test_image, test_label)
-                    
-                        
-                #Convert to random sample
-                if use_rand_sample == True:
-                    test_image = self.get_random_version(test_image, test_label)
-                
-                test_pred = self.model.predict(test_image.reshape(self.input_shape))[0]
-                
-                #Use adversarial prediction as a label in calculating the Inverse HVP (s_test)
-                if use_adv_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                        
-                #Use random label
-                if use_rand_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                
-                #use predicted label
-                if use_reg_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                
-                test_pred = np.argmax(test_pred)
-                test_lb = np.argmax(test_label)
-            
-                #Calculate the Inverse HVP for this test point
-                inverse_hvp = self.get_inverse_hvp(test_image, test_label)
-                
-                hvp_matrix[s_idx,:] = inverse_hvp
-                
-        print ('Done Inverse HVP.\nComputing influence\n')   
+            hvp_matrix = np.zeros((test_points.shape[0]*self.num_classes, self.num_params))
+               
+            #Build up hvp_matrix
+            for idx, img_lab in enumerate(zip(test_points, test_labels)):
+                inverse_hvp = self.get_inverse_hvp(img_lab[0], img_lab[1])
+                hvp_matrix[idx,:] = inverse_hvp
+        
+        if verbose:      
+            print ('Done Inverse HVP.\nComputing influence\n')   
             
         #Perform dot product for influence
         inf_matrix = np.dot(hvp_matrix, train_gradients.T)
-            
-        print ('Done computing Influence.\nSaving matrices')
+        
+        if verbose:
+            print ('Done computing Influence.\nSaving matrices')
 
         #Save results
         if inf_save_path != '':
             np.save(inf_save_path, inf_matrix)
         if hvp_save_path != '':
             np.save(hvp_save_path, hvp_matrix)
-        print ('Saved matrices')
+        if verbose:
+            print ('Saved matrices')
             
         return inf_matrix, hvp_matrix, train_gradients
  
-    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_test_samples=10,num_train_samples=10000, use_adv_sample=False, use_rand_sample=False, use_adv_label=False, use_rand_label=False, use_reg_label=False, sim_save_path='', train_grad_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='',seed=SEED,verbose=True):
+    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_train_samples=1000, sim_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='', test_points_path='', test_labels_path='',seed=SEED,verbose=True):
         """
             Desc:
-                Calculate similarity matrix of training points on test points.
+                Calculate influence matrix of training points on test points.
             Params:
-              test_classes(list): List containing test classses for which to calculate influence for
-              train_classes(list): List containing training classes used for calculating infuence on each element of test_classes
-              num_test_samples(int): number of test samples to use per class
-              use_adv_sample(bool): Convert samples to adversarial using FGSM if true
-              use_adv_label(bool): Treat network prediction on adversarial sample as the True label while calculating influence
+              use_train_grad_matrix: load up a calculated gradient matrix for training pts or create a new matrix
+              use_test_grad_matrix: load up a calculated gradient matrix for test points or create a new matrix
+              num_train_samples: number of training samples to use for calculating influence
+              sim_save_path: path to save the influence matrix
+              test_grad_save_path: path to save the gradient matrix for test points
+              train_grad_save_path: path to save the gradient matrix for train points
+              test_grad_matrix_path: path to load up a saved gradients matrix for test points
+              train_grad_matrix_path: path to load up gradients matrix for training points
               
           @return:
-              similarity_matrix: matrix of size test_classes x train_classes 
+              similarity_matrix: matrix of size test_points x training_points
+              test_grad_matrix: test_points x num_params matrix
+              train_grad_matrix: train_points x num_params matrix
+              
         """
         
-        print ('Getting gradients for training points...')
+        if verbose:
+            print ('Getting gradients for training points...')
+                   
         #Get training gradients
         if use_train_grad_matrix:
             train_gradients = np.load(train_grad_matrix_path)
@@ -450,91 +490,41 @@ class NeuralNetwork(object):
             random_train_labels = self.train_labels[random_data_indices]
             train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
         
+        if verbose:
         print ('Computed gradients. Saving to file')
+                   
         if train_grad_save_path != '':
             np.save(train_grad_save_path, train_gradients)
-       
-        print ('Saved gradients.\nGetting gradients for test points')
+        if verbose:
+            print ('Saved gradients.\nGetting gradients for test points')
         
         if use_test_grad_matrix:
             test_gradients = np.load(test_grad_matrix_path)
-        
+   
         else:
+            #We need test points for which to calculate influence
+            assert(os.path.isfile(test_points_path)
+            assert(os.path.isfile(test_labels_path)
+            test_points = np.load(test_points_path)
+            test_labels = np.load(test_labels_path)
             
-            #Perturb test points or get their predicted label
-            test_points = np.zeros(( [num_test_samples*self.num_classes] +  list(self.test_data.shape[1:]) ))
-            test_labels = np.zeros((num_test_samples*self.num_classes, self.test_labels.shape[1]))
-            
-            #We will sample num_samples for each class
-            test_indices = list()
-            
-            np.random.seed(seed)
-            for c in range(self.num_classes):
-                test_class_indices = np.random.choice(np.where(np.argmax(self.test_labels,axis=1) == c)[0], num_test_samples)
-                test_indices[c*10:c*10+10] = test_class_indices[:]
-            
-            #Iterate over test points for the current class 
-            for s_idx, test_idx in enumerate(test_indices):
-                
-                test_image = self.test_data[test_idx]
-                test_label = self.test_labels[test_idx]
-                
-                #Convert to adversarial sample
-                if use_adv_sample == True:
-                    test_image = self.get_adversarial_version(test_image, test_label)
-                    
-
-
-                #Convert to random sample
-                if use_rand_sample == True:
-                    test_image = self.get_random_version(test_image, test_label)
-                
-                    
-                test_pred = self.model.predict(test_image.reshape(self.input_shape))[0]
-                
-                
-                #Use adversarial prediction as a label in calculating the Inverse HVP (s_test)
-                if use_adv_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                        
-                #Use random label
-                if use_rand_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                    
-                #Use predicted label
-                if use_reg_label == True:
-                    pred_idx = np.argmax(test_pred)
-                    test_label = np.zeros(test_pred.shape)
-                    test_label[pred_idx] = 1.0
-                
-                test_pred = np.argmax(test_pred)
-                
-                test_lb = np.argmax(test_label)
-            
-                test_points[s_idx,:] = test_image
-                test_labels[s_idx,:] = test_label[:]
-
-                
             test_gradients = np.array(self.get_gradients_wrt_params(test_points, test_labels))
-            
-        print ('Done computing test gradients.\nComputing similarity')   
+        if verbose:   
+            print ('Done computing test gradients.\nComputing similarity')   
             
         #Perform dot product
         sim_matrix = np.dot(test_gradients, train_gradients.T)
-                
-        print ('Done similarity.\nSaving matrices')
+        
+        if verbose:       
+            print ('Done similarity.\nSaving matrices')
 
         #Save results
         if sim_save_path != '':
             np.save(sim_save_path, sim_matrix)
         if test_grad_save_path != '':
             np.save(test_grad_save_path,test_gradients)
-        
-        print ('Done saving matrices.')
+        if verbose:
+            print ('Done saving matrices.')
             
         return sim_matrix, test_gradients, train_gradients
     

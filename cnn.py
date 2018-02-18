@@ -116,6 +116,14 @@ class CNN(NeuralNetwork):
         logits, = preds.op.inputs #inputs to the softmax operation
         return logits, preds
     
+    def predict(self, x):
+        feed_dict = {
+                self.input_placeholder: x.reshape(self.input_shape),
+                K.learning_phase(): 0
+            } 
+        preds = self.sess.run(self.preds, feed_dict=feed_dict)
+        print (preds)
+        return preds
         
     def compile_model(self):
         """
