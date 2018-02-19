@@ -76,6 +76,7 @@ def analyze_matrix(data_matrix, preds, train_labels='',num_classes=10,str_type='
     max_match_pred_class = 0.0
     mean_match_pred_class = 0.0
     var_match_pred_class = 0.0
+    min_match_pred_class = 0.0
     
     
     #Iterate over each class
@@ -89,12 +90,14 @@ def analyze_matrix(data_matrix, preds, train_labels='',num_classes=10,str_type='
             
         #We need the below to get the max values and max classes for this test point
         max_val = -sys.float_info.max
+        min_val = sys.float_info.max
         max_mean_val = -sys.float_info.max
         max_var_val = -sys.float_info.max
         
         max_val_class = -1
         max_mean_val_class = -1
         max_var_val_class = -1
+        min_val_class = -1
        
         #Iterate over all classes
         for tc in range(num_classes):
@@ -102,17 +105,21 @@ def analyze_matrix(data_matrix, preds, train_labels='',num_classes=10,str_type='
             class_indices = np.where(train_labels == tc)
             scores = data_matrix[test_idx, class_indices]
             smax = np.max(scores)
+            smin = np.min(scores)
             mean = np.mean(scores)
             median = np.median(scores)
             var = np.var(scores)
             if verbose: 
-                prt_st = '    Train Class: %d, Max ' + str_type + ': %.8f, Mean ' + str_type + ': %.8f, Median ' + str_type + ': %.8f, Var ' + str_type + ': %.8f'
-                print (prt_st % (tc, smax, mean, median, var ))
+                prt_st = '    Train Class: %d, Max ' + str_type + ': %.8f, Min ' + str_type + ': %.8f, Mean ' + str_type + ': %.8f, Median ' + str_type + ': %.8f, Var ' + str_type + ': %.8f'
+                print (prt_st % (tc, smax, smin, mean, median, var ))
                 
             #Check if this class has higher values than previous classes
             if smax > max_val:
                 max_val = smax
                 max_val_class = tc
+            if smin < min_val:
+                min_val = smin
+                min_val_class = tc
             if mean > max_mean_val:
                 max_mean_val = mean
                 max_mean_val_class = tc
@@ -127,11 +134,13 @@ def analyze_matrix(data_matrix, preds, train_labels='',num_classes=10,str_type='
             mean_match_pred_class+=1
         if max_var_val_class == preds[test_idx]:
             var_match_pred_class+=1
+        if min_val_class == preds[test_idx]:
+            min_match_pred_class+=1
         if verbose: 
-            prt_st = '\nSummary: Max '+ str_type + ': %.8f, %d. \tMax Mean: %.8f, %d. \tMax Var: %.8f,%d'
-            print (prt_st % (max_val, max_val_class, max_mean_val, max_mean_val_class, max_var_val, max_var_val_class))
+            prt_st = '\nSummary: Max '+ str_type + ': %.8f, %d. \tMin ' + str_type + ': %.8f, %d. \tMax Mean: %.8f, %d. \tMax Var: %.8f,%d'
+            print (prt_st % (max_val, max_val_class, min_val, min_val_class, max_mean_val, max_mean_val_class, max_var_val, max_var_val_class))
                 
-    print ('\nMax Match: %.3f, Mean Match: %.3f, Var Match : %.3f' % (max_match_pred_class/100.0, mean_match_pred_class/100.0, var_match_pred_class/100.0)  )            
+    print ('\nMax Match: %.3f, Min Match : %.3f, Mean Match: %.3f, Var Match : %.3f' % (max_match_pred_class/100.0,min_match_pred_class/100.0, mean_match_pred_class/100.0, var_match_pred_class/100.0)  )            
 
     
 #Only works on 100 x n matrices right now
@@ -155,12 +164,14 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
     mean_higher_all_classes = 0.0
     var_higher_all_classes = 0.0
     median_higher_all_classes = 0.0
+    min_lower_all_classes = 0.0
     
     #Counts of the number of times matrix_1 values were higher than matrix_2 for the MAX class
     max_higher_max_class = 0.0
     mean_higher_max_class = 0.0
     var_higher_max_class = 0.0
     median_higher_max_class = 0.0
+    min_lower_max_class = 0.0
     
     for c in range(num_classes):
         
@@ -175,22 +186,26 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
         max_mean_val1 = -sys.float_info.max
         max_var1 = -sys.float_info.max
         max_median1 = -sys.float_info.max
+        min_val1 = sys.float_info.max
         
         max_val_class1 = -1
         max_mean_val_class1 = -1
         max_var_class1 = -1
         max_median_class1 = -1
+        min_val_class1 = -1
         
         max_val2 = -sys.float_info.max
         max_mean_val2 = -sys.float_info.max
         max_var2 = -sys.float_info.max
         max_median2 = -sys.float_info.max
+        min_val2=sys.float_info.max
 
         
         max_val_class2 = -1
         max_mean_val_class2 = -1
         max_var_class2 = -1
         max_median_class2 = -1
+        min_val_class2 = -1
        
         for tc in range(num_classes):
             #Get training points for this class
@@ -198,10 +213,12 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
             val_scores1 = matrix_1[test_idx, class_indices]
             val_scores2 = matrix_2[test_idx, class_indices]
             smax1 = np.max(val_scores1)
+            smin1 = np.min(val_scores1)
             mean1 = np.mean(val_scores1)
             median1 = np.median(val_scores1)
             var1 = np.var(val_scores1)
             smax2 = np.max(val_scores2)
+            smin2 = np.min(val_scores2)
             mean2 = np.mean(val_scores2)
             median2 = np.median(val_scores2)
             var2 = np.var(val_scores2)
@@ -215,11 +232,13 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
                 median_higher_all_classes +=1.0
             if var1 > var2:
                 var_higher_all_classes+=1.0
+            if smin1 < smin2:
+                min_lower_all_classes+=1.0
                 
                 
             if verbose:
-                prt_st = '    Train Class: %d, Max ' + str_type + ' Ratio: %.8f, Mean ' + str_type + ' Ratio: %.8f, Median ' + str_type + ' Ratio: %.8f, Var ' + str_type + ' Ratio: %.8f'
-                print (prt_st % (tc, smax1/smax2, mean1/mean2, median1/median2, var1/var2 ))
+                prt_st = '    Train Class: %d, Max ' + str_type + ' Ratio: %.8f, Min ' + str_type + ' Ratio: %.8f, Mean ' + str_type + ' Ratio: %.8f, Median ' + str_type + ' Ratio: %.8f, Var ' + str_type + ' Ratio: %.8f'
+                print (prt_st % (tc, smax1/smax2, smin1/smin2, mean1/mean2, median1/median2, var1/var2 ))
             
             #Update max values for each matrix
             if smax1 > max_val1:
@@ -234,6 +253,9 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
             if median1 > max_median1:
                 max_median1 = median1
                 max_median_class1 = tc
+            if smin1 < min_val1:
+                min_val1 = smin1
+                min_val_class1 = tc
             
             if smax2 > max_val2:
                 max_val2 = smax2
@@ -247,6 +269,9 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
             if median2 > max_median2:
                 max_median2 = median2
                 max_median_class2 = tc
+            if smin2 < min_val2:
+                min_val2 = smin2
+                min_val_class2 = tc
             
                 
         #Compare matrix_1 max values to matrix_2 max values
@@ -258,18 +283,21 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
             var_higher_max_class+=1.0
         if max_median1 > max_median2:
             median_higher_max_class+=1.0
+        if min_val1 < min_val2:
+            min_lower_max_class+=1.0
         
         if verbose:
-            prt_st = '\nSummary: Max '+ str_type + ' Ratio: %.8f, %d, %d. \tMax Mean Ratio: %.8f, %d, %d. \tMax Var Ratio: %.8f,%d,%d'
-            print (prt_st % (max_val1/max_val2, max_val_class1, max_val_class2,max_mean_val1/max_mean_val2, max_mean_val_class1, 
+            prt_st = '\nSummary: Max '+ str_type + ' Ratio: %.8f, %d, %d.\tMin '+ str_type + ' Ratio: %.8f, %d, %d.\tMax Mean Ratio: %.8f, %d, %d. \tMax Var Ratio: %.8f,%d,%d'
+            print (prt_st % (max_val1/max_val2, max_val_class1, max_val_class2, min_val1/min_val2, min_val_class1, min_val_class2, max_mean_val1/max_mean_val2, max_mean_val_class1, 
                              max_mean_val_class2, max_var1/max_var2, max_var_class1, max_var_class2))
 
-    print ('Max Higher All: %.3f, Mean Higher All : %.3f, Median Higher All: %.2f, Var Higher All; %.2f' % (max_higher_all_classes/float(1000), 
+    print ('Max Higher All: %.3f, Min Lower All: %.3f Mean Higher All : %.3f, Median Higher All: %.2f, Var Higher All; %.2f' % (max_higher_all_classes/float(1000), min_lower_all_classes/float(1000),
+                                                                                                                              
                                                                                                             mean_higher_all_classes/float(1000),
                                                                                                             median_higher_all_classes/float(1000),
                                                                                                             var_higher_all_classes/float(1000)))
     
-    print ('Max Higher Max: %.3f, Mean Higher Max : %.3f, Median Higher Max: %.2f, Var Higher Max; %.2f' % (max_higher_max_class/float(100), 
+    print ('Max Higher Max: %.3f, Min Lower Max: %.3f, Mean Higher Max : %.3f, Median Higher Max: %.2f, Var Higher Max; %.2f' % (max_higher_max_class/float(100), min_lower_max_class/float(100),
                                                                                                             mean_higher_max_class/float(100),
                                                                                                             median_higher_max_class/float(100),
                                                                                                             var_higher_max_class/float(100)))
