@@ -13,6 +13,8 @@ import influence.util as util
 
 os.environ["CUDA_VISIBLE_DEVICES"] = "3"
 
+#CHANGE SEED and the number in exp_number in order to run new experiments
+
 #Seed used for all calculations of training and test point indices 
 SEED = 14
 #exp_number used to save all results to disk
@@ -358,5 +360,6 @@ print ('10k')
 util.compare_matrices(inf_matrix_10k_cw, inf_matrix_10k_fgsm, cw_pred, fgsm_pred, train_labels=train_labels_1k)
 
 
-
-
+finish_time = time.time()
+minutes = (finish_time - start_time) / 60.0
+print("--- %s minutes ---" % (minutes))

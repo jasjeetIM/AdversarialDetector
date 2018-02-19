@@ -467,7 +467,7 @@ class NeuralNetwork(object):
             
         return inf_matrix, hvp_matrix, train_gradients
  
-    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_train_samples=1000, sim_save_path='', test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='', test_points_path='', test_labels_path='',seed=SEED,verbose=True):
+    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_train_samples=1000, sim_save_path='', train_grad_save_path='',test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='', test_points_path='', test_labels_path='',seed=SEED,verbose=True):
         """
             Desc:
                 Calculate influence matrix of training points on test points.
