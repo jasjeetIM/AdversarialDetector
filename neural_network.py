@@ -322,28 +322,41 @@ class NeuralNetwork(object):
         return x_perturbed
         
     
-    def generate_indices_all_classes(self, y=None, seed=SEED, class_=0,num_samples=10):
+    def gen_rand_indices_all_classes(self, y=None, seed=SEED, class_=0,num_samples=10):
         """
            Generate random indices to be used for sampling points
            y: n x label_shape matrix containing labels
            
         """
-        assert(y)
-        np.random.seed(seed)
-        all_class_indices = list()
-        for c_ in range(self.num_classes):
-            class_indices = self.generate_indices_class(y,class_=class_,num_samples=num_samples) 
-            all_class_indices[c_*num_samples: c_*num_samples+num_samples] = class_indices[:]
+        if y is not None:
+            np.random.seed(seed)
+            all_class_indices = list()
+            for c_ in range(self.num_classes):
+                class_indices = self.gen_rand_indices_class(y,class_=class_,num_samples=num_samples) 
+                all_class_indices[c_*num_samples: c_*num_samples+num_samples] = class_indices[:]
             
-        return all_class_indices
+            return all_class_indices
+        else:
+            print ('Please provide training labels')
+            return
         
-    def generate_indices_class(self, y=None, class_=0, num_samples=10):
+    def gen_rand_indices_class(self, y=None, class_=0, num_samples=10):
         """
         Generate indices for the given class
         """
-        assert(y)
-        c_indices = np.random.choice(np.where(np.argmax(y,axis=1) == class_)[0], num_samples)
-        return c_indices
+        if y is not None:
+            c_indices = np.random.choice(np.where(np.argmax(y,axis=1) == class_)[0], num_samples)
+            return c_indices
+        else:
+            print ('Please provide training labels')
+        
+    def gen_rand_indices(self, low=0, high=1000,seed=SEED, num_samples=1000):
+        """
+        Randomly sample indices from a range
+        """
+        np.random.seed(seed)
+        indices = np.random.choice(range(low,high), num_samples)
+        return indices
         
         
     def train(self, epochs):
@@ -404,8 +417,7 @@ class NeuralNetwork(object):
             train_gradients = np.load(grad_matrix_path)
         
         else:
-            np.random.seed(seed)
-            random_data_indices = np.random.choice(range(0,self.train_data.shape[0]), num_train_samples)
+            random_data_indices = self.gen_rand_indices(low=0,high=self.train_data.shape[0],seed=seed, num_samples=num_train_samples)
             random_train_data = self.train_data[random_data_indices]
             random_train_labels = self.train_labels[random_data_indices]
             train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
@@ -424,8 +436,8 @@ class NeuralNetwork(object):
         
         else:
             #We need test points for which to calculate influence
-            assert(os.path.isfile(test_points_path)
-            assert(os.path.isfile(test_labels_path)
+            assert(os.path.isfile(test_points_path))
+            assert(os.path.isfile(test_labels_path))
             test_points = np.load(test_points_path)
             test_labels = np.load(test_labels_path)
             
@@ -483,15 +495,14 @@ class NeuralNetwork(object):
         if use_train_grad_matrix:
             train_gradients = np.load(train_grad_matrix_path)
         
-        else:     
-            np.random.seed(seed)
-            random_data_indices = np.random.choice(range(0,self.train_data.shape[0]), num_train_samples)
+        else:
+            random_data_indices = self.gen_rand_indices(low=0,high=self.train_data.shape[0],seed=seed, num_samples=num_train_samples)
             random_train_data = self.train_data[random_data_indices]
             random_train_labels = self.train_labels[random_data_indices]
             train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
         
         if verbose:
-        print ('Computed gradients. Saving to file')
+            print ('Computed gradients. Saving to file')
                    
         if train_grad_save_path != '':
             np.save(train_grad_save_path, train_gradients)
@@ -503,8 +514,8 @@ class NeuralNetwork(object):
    
         else:
             #We need test points for which to calculate influence
-            assert(os.path.isfile(test_points_path)
-            assert(os.path.isfile(test_labels_path)
+            assert(os.path.isfile(test_points_path))
+            assert(os.path.isfile(test_labels_path))
             test_points = np.load(test_points_path)
             test_labels = np.load(test_labels_path)
             
