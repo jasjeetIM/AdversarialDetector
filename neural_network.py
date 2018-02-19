@@ -322,7 +322,7 @@ class NeuralNetwork(object):
         return x_perturbed
         
     
-    def gen_rand_indices_all_classes(self, y=None, seed=SEED, class_=0,num_samples=10):
+    def gen_rand_indices_all_classes(self, y=None, seed=SEED,num_samples=10):
         """
            Generate random indices to be used for sampling points
            y: n x label_shape matrix containing labels
@@ -332,7 +332,7 @@ class NeuralNetwork(object):
             np.random.seed(seed)
             all_class_indices = list()
             for c_ in range(self.num_classes):
-                class_indices = self.gen_rand_indices_class(y,class_=class_,num_samples=num_samples) 
+                class_indices = self.gen_rand_indices_class(y,class_=c_,num_samples=num_samples) 
                 all_class_indices[c_*num_samples: c_*num_samples+num_samples] = class_indices[:]
             
             return all_class_indices
