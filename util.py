@@ -173,6 +173,21 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
     median_higher_max_class = 0.0
     min_lower_max_class = 0.0
     
+    
+    #Counts of the number of times matrix_1 values were higher than matrix_2 values for all classes
+    max_all_classes_ratio = list()
+    mean_all_classes_ratio = list()
+    var_all_classes_ratio = list()
+    median_all_classes_ratio = list()
+    min_all_classes_ratio = list()
+    
+    #Counts of the number of times matrix_1 values were higher than matrix_2 for the MAX class
+    max_max_class_ratio = list()
+    mean_max_class_ratio = list()
+    var_max_class_ratio = list()
+    median_max_class_ratio = list()
+    min_max_class_ratio = list()
+    
     for c in range(num_classes):
         
     #Iterate over each point in each class
@@ -222,6 +237,14 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
             mean2 = np.mean(val_scores2)
             median2 = np.median(val_scores2)
             var2 = np.var(val_scores2)
+
+            
+            max_all_classes_ratio.append(smax1/smax2)
+            mean_all_classes_ratio.append(mean1/mean2)
+            var_all_classes_ratio.append(var1/var2)
+            median_all_classes_ratio.append(median1/median2)
+            min_all_classes_ratio.append(smin1/smin2)
+
             
             #Compare matrix_1 values to matrix_2 values
             if smax1 > smax2:
@@ -273,7 +296,12 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
                 min_val2 = smin2
                 min_val_class2 = tc
             
-                
+        max_max_class_ratio.append(max_val1/max_val2)
+        mean_max_class_ratio.append(max_mean_val1/max_mean_val2)
+        var_max_class_ratio.append(max_var1/max_var2)
+        median_max_class_ratio.append(max_median2/max_median2)
+        min_max_class_ratio.append(min_val1/min_val2)     
+        
         #Compare matrix_1 max values to matrix_2 max values
         if max_val1 > max_val2:
             max_higher_max_class+=1.0
@@ -296,11 +324,13 @@ def compare_matrices(matrix_1, matrix_2, pred_1, pred_2,train_labels='',num_clas
                                                                                                             mean_higher_all_classes/float(1000),
                                                                                                             median_higher_all_classes/float(1000),
                                                                                                             var_higher_all_classes/float(1000)))
+    print ('Max All Ratio: Mean=%.3f, Var=%.3f, Mean All Ratio: Mean=%.3f, Var=%.3f, Median All Ratio: Mean=%.3f, Var=%.3f, Var All Ratio: Mean=%.3f, Var=%.3f' % (np.mean(max_all_classes_ratio), np.var(max_all_classes_ratio), np.mean(mean_all_classes_ratio), np.var(mean_all_classes_ratio),np.mean(median_all_classes_ratio), np.var(median_all_classes_ratio),np.mean(var_all_classes_ratio), np.var(var_all_classes_ratio)))
     
     print ('Max Higher Max: %.3f, Min Lower Max: %.3f, Mean Higher Max : %.3f, Median Higher Max: %.2f, Var Higher Max; %.2f' % (max_higher_max_class/float(100), min_lower_max_class/float(100),
                                                                                                             mean_higher_max_class/float(100),
                                                                                                             median_higher_max_class/float(100),
                                                                                                             var_higher_max_class/float(100)))
+    print ('Max Max Ratio: Mean=%.3f, Var=%.3f, Mean Max Ratio: Mean=%.3f, Var=%.3f, Median Max Ratio: Mean=%.3f, Var=%.3f, Var Max Ratio: Mean=%.3f, Var=%.3f' % (np.mean(max_max_class_ratio), np.var(max_max_class_ratio), np.mean(mean_max_class_ratio), np.var(mean_max_class_ratio),np.mean(median_max_class_ratio), np.var(median_max_class_ratio),np.mean(var_max_class_ratio), np.var(var_max_class_ratio)))
         
     
 """

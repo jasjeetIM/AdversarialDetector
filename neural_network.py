@@ -246,7 +246,18 @@ class NeuralNetwork(object):
                  'batch_size': 1,
                  'initial_const': 10}
             x_adv = cw.generate_np(x,**cw_params)
-            
+        
+        elif attack == 'BIM':
+            K.set_learning_phase(0)
+            model = KerasModelWrapper(self.model)
+            bim = BasicIterativeAttack(model, sess=self.sess)
+            y_name = 'y'
+            bim_params = {'eps': 0.3,
+                          yname: None,
+                          'eps_iter': 100,
+                          'clip_min': 0.,
+                          'clip_max': 1.}
+            x_adv = bim.generate_np(x, **bim_params)
         return x_adv
         
     def get_random_version(self, x, y, eps=0.3):
@@ -315,7 +326,8 @@ class NeuralNetwork(object):
             
         elif perturbation == 'CW':
             x_perturbed = self.get_adversarial_version(x,y,attack='CW')
-        
+        elif perturbation == 'BIM':
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM')
         else:
             x_perturbed = self.get_random_version(x,y,eps)
         

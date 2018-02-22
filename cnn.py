@@ -158,9 +158,9 @@ class CNN(NeuralNetwork):
         """    
         
         
-        self.train_data = self.train_data.reshape(-1, 28, 28, 1)
-        self.val_data = self.val_data.reshape(-1, 28, 28, 1)
-        self.test_data = self.test_data.reshape(-1, 28, 28, 1)
+        self.train_data = self.train_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
+        self.val_data = self.val_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
+        self.test_data = self.test_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
     
         self.train_data = self.train_data.astype('float32')
         self.val_data = self.val_data.astype('float32')
