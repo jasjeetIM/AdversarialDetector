@@ -254,7 +254,8 @@ class NeuralNetwork(object):
             yname = 'y'
             bim_params = {'eps': eps,
                           yname: None,
-                          'eps_iter': iterations,
+                          'eps_iter': eps/float(iterations),
+                          'nb_iter': iterations,
                           'clip_min': 0.,
                           'clip_max': 1.}
             x_adv = bim.generate_np(x, **bim_params)
