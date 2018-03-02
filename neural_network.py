@@ -7,7 +7,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
 from tensorflow.examples.tutorials.mnist import input_data
 from cleverhans.utils_keras import KerasModelWrapper
-from cleverhans.attacks import CarliniWagnerL2
+from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod
 
 import numpy as np
 import os, time, math
@@ -212,7 +212,7 @@ class NeuralNetwork(object):
             gradient[i,:] = temp
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3, attack='FGSM'):
+    def get_adversarial_version(self, x, y, eps=0.3, iterations=100,attack='FGSM'):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -241,7 +241,7 @@ class NeuralNetwork(object):
             yname = 'y'
             cw_params = {'binary_search_steps': 1,
                  yname: None,
-                 'max_iterations': 100,
+                 'max_iterations': iterations,
                  'learning_rate': 0.1,
                  'batch_size': 1,
                  'initial_const': 10}
@@ -250,11 +250,11 @@ class NeuralNetwork(object):
         elif attack == 'BIM':
             K.set_learning_phase(0)
             model = KerasModelWrapper(self.model)
-            bim = BasicIterativeAttack(model, sess=self.sess)
-            y_name = 'y'
-            bim_params = {'eps': 0.3,
+            bim = BasicIterativeMethod(model, sess=self.sess)
+            yname = 'y'
+            bim_params = {'eps': eps,
                           yname: None,
-                          'eps_iter': 100,
+                          'eps_iter': iterations,
                           'clip_min': 0.,
                           'clip_max': 1.}
             x_adv = bim.generate_np(x, **bim_params)
@@ -310,7 +310,7 @@ class NeuralNetwork(object):
             
         return inverse_hvp_
     
-    def generate_perturbed_data(self, x, y, eps=0.3, seed=SEED, perturbation='FGSM'):
+    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM'):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -322,12 +322,12 @@ class NeuralNetwork(object):
         x_perturbed: perturbed version of x
         """
         if perturbation == 'FGSM':
-            x_perturbed = self.get_adversarial_version(x,y,eps,attack='FGSM')
+            x_perturbed = self.get_adversarial_version(x,y,eps,attack='FGSM', eps=eps)
             
         elif perturbation == 'CW':
-            x_perturbed = self.get_adversarial_version(x,y,attack='CW')
+            x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps)
         elif perturbation == 'BIM':
-            x_perturbed = self.get_adversarial_version(x,y,attack='BIM')
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM',iterations=iterations,eps=eps)
         else:
             x_perturbed = self.get_random_version(x,y,eps)
         
