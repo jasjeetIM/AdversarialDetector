@@ -212,6 +212,26 @@ class NeuralNetwork(object):
             gradient[i,:] = temp
         return gradient
     
+    def get_gradients_wrt_input(self, X, Y):
+        """Get gradients of Loss(X,Y) wrt input"""
+        
+        inp_size = X.shape[0]
+        inp_shape = np.prod(X[0].shape)
+        gradient = np.zeros((inp_size, inp_shape), dtype=np.float32)
+        
+        #Get one gradient at a time
+        for i in range(inp_size):
+            grad = self.sess.run(
+                    self.grad_loss_wrt_input,
+                    feed_dict={
+                        self.input_placeholder: X[i].reshape(self.input_shape),                    
+                        self.labels_placeholder: Y[i].reshape(self.label_shape),
+                        K.learning_phase(): 0
+                        }
+                    )[0]
+            gradient[i,:] = grad.reshape(inp_shape)
+        return gradient
+    
     def get_adversarial_version(self, x, y, eps=0.3, iterations=100,attack='FGSM'):
         """
         Desc:
