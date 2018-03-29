@@ -275,7 +275,7 @@ class NeuralNetwork(object):
                  'guide_img': guide_inp,
                  'max_iterations': iterations,
                  'learning_rate': 0.1,
-                 'batch_size': x.shape[0],
+                 'batch_size': 1,
                  'initial_const': 10}     
                 
               
