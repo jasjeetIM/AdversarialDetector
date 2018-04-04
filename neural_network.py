@@ -5,7 +5,7 @@ import tensorflow as tf
 from tensorflow import gradients
 from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
-from tensorflow.examples.tutorials.mnist import input_data
+from keras.datasets import cifar10, mnist
 from cleverhans.utils_keras import KerasModelWrapper
 from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod
 
@@ -13,6 +13,7 @@ import numpy as np
 import os, time, math
 from keras import backend as K
 from keras.models import Sequential
+from keras.utils import np_utils
 import influence.util as util
 
 SEED = 12
@@ -21,14 +22,14 @@ SEED = 12
 class NeuralNetwork(object):
     """General Neural Network Class for multi-class classification """
     
-    def __init__(self, model_name=None, num_classes=10, batch_size=512, initial_learning_rate=8e-1, load_from_file=False, load_model_path='', load_weights_path=''):
+    def __init__(self, model_name=None, dataset='mnist', batch_size=512, initial_learning_rate=8e-1, load_from_file=False, load_model_path='', load_weights_path=''):
         """
         Desc:
             Constructor
         
         Params:
             model_name(str): Name of model (will be saved as such)
-            num_classes(int): number of classes to be classified by model
+            dataset(str): Name of dataset to load - also determines which model will be loaded
             batch_size(int): Batch size to be used during training
             initial_learning_rate(float): Learning rate to start training the model. 
             load_from_file(bool): load parameters of model from file
@@ -42,22 +43,19 @@ class NeuralNetwork(object):
         
         
         self.model_name = model_name
-        self.num_classes = num_classes
         self.batch_size = batch_size
         self.initial_learning_rate = initial_learning_rate
-        self.data = input_data.read_data_sets("MNIST_data/", one_hot=True)
         
-        
-        #Hardcode the data for now. We will add better database objects in the future
-        self.train_data = self.data.train.images
-        self.train_labels = self.data.train.labels
-        self.val_data = self.data.validation.images
-        self.val_labels = self.data.validation.labels
-        self.test_data = self.data.test.images
-        self.test_labels = self.data.test.labels
-        
-        self.reshape_data()
+        if dataset.lower() == 'mnist' or dataset.lower() == 'mnist-inf':
+            self.num_classes = 10
+            self.train_data, self.train_labels, self.val_data, self.val_labels, self.test_data, self.test_labels = self.load_dataset('mnist')
+
          
+        elif dataset.lower() == 'cifar10' or dataset.lower() == 'cifar10-inf':
+            self.num_classes = 10
+            self.train_data, self.train_labels, self.val_data, self.val_labels, self.test_data, self.test_labels = self.load_dataset('cifar10')
+        
+        
         # Initialize Tf and Keras
         gpu_options = tf.GPUOptions(allow_growth=True)
         self.sess = tf.Session(config=tf.ConfigProto(gpu_options=gpu_options))
@@ -67,20 +65,19 @@ class NeuralNetwork(object):
         self.beta = 0.01
         self.dropout_prob = 0.5
         
-        
         #Setup Input Placeholders required for forward pass, implemented by child classes (eg: CNN or FCN)
         self.input_placeholder, self.labels_placeholder, self.input_shape, self.label_shape = self.create_input_placeholders() 
                 
         # Setup model operation implemented by child classes
-        self.model = self.create_model()
+        self.model = self.create_model(dataset.lower())
         self.logits, self.preds = self.get_logits_preds(self.input_placeholder)
         self.params = self.get_params()
         
+        #Get total number of params in model
         num_params = 0
         for j in range(len(self.params)):
             num_params = num_params + int(np.product(self.params[j].shape))
         self.num_params = num_params
-        
 
         # Setup loss 
         self.training_loss = self.get_loss_op(self.logits, self.labels_placeholder)
@@ -88,17 +85,18 @@ class NeuralNetwork(object):
         # Setup gradients 
         self.grad_loss_wrt_param = tf.gradients(self.training_loss, self.params)
       
-        #Required for HVP
-        self.v_placeholder = [tf.placeholder(tf.float32, shape=a.get_shape()) for a in self.params]
-        self.hessian_vector = util.hessian_vector_product(self.training_loss, self.params, self.v_placeholder)
-        self.grad_loss_wrt_input = tf.gradients(self.training_loss, self.input_placeholder)        
-
-        # Because tf.gradients auto accumulates, we probably don't need the add_n (or even reduce_sum)        
-        self.influence_op = tf.add_n(
+        #Required for HVP - only works with models that are twice differntiable
+        if dataset.lower() == 'mnist-inf' or dataset.lower() == 'cifar10-inf':
+            self.v_placeholder = [tf.placeholder(tf.float32, shape=a.get_shape()) for a in self.params]
+            self.hessian_vector = util.hessian_vector_product(self.training_loss, self.params, self.v_placeholder)
+           # Because tf.gradients auto accumulates, we probably don't need the add_n (or even reduce_sum)        
+            self.influence_op = tf.add_n(
               [tf.reduce_sum(tf.multiply(a, array_ops.stop_gradient(b))) for a, b in zip(self.grad_loss_wrt_param, self.v_placeholder)])
 
-        #Required for calculation of influce of perturbation of data point on test point
-        self.grad_influence_wrt_input_op = tf.gradients(self.influence_op, self.input_placeholder)
+            #Required for calculation of influce of perturbation of data point on test point
+            self.grad_influence_wrt_input_op = tf.gradients(self.influence_op, self.input_placeholder)
+            
+        self.grad_loss_wrt_input = tf.gradients(self.training_loss, self.input_placeholder)        
         
         #Load model parameters from file or initialize 
         if load_from_file == False:
@@ -107,6 +105,49 @@ class NeuralNetwork(object):
             self.load_model(load_model_path, load_weights_path)
         return
 
+    
+    def load_dataset(self, dataset='mnist'):
+        """
+        Desc: Load the required dataset into the model
+        """
+        
+        if dataset == 'mnist':
+            (X_train, Y_train), (X_test, Y_test) = mnist.load_data()
+            X_train = X_train.reshape(-1, 28, 28, 1)
+            X_test = X_test.reshape(-1, 28, 28, 1)
+            self.input_side = 28
+            self.input_channels = 1
+            self.input_dim = self.input_side * self.input_side * self.input_channels
+            
+        elif dataset == 'cifar10':
+            (X_train, Y_train), (X_test, Y_test) = cifar10.load_data()
+            X_train = X_train.reshape(-1, 32, 32, 3)
+            X_test = X_test.reshape(-1, 32, 32, 3)
+            self.input_side = 32
+            self.input_channels = 3
+            self.input_dim = self.input_side * self.input_side * self.input_channels
+    
+        X_train = X_train.astype('float32')
+        X_test = X_test.astype('float32')
+        X_train /= 255
+        X_test /= 255
+        Y_train = np_utils.to_categorical(Y_train, 10)
+        Y_test = np_utils.to_categorical(Y_test, 10)
+            
+        #Get validation sets as well
+        val_indices = np.random.choice(range(X_test.shape[0]), 5000)
+        X_val = X_test[val_indices]
+        Y_val = Y_test[val_indices]
+    
+        mask = np.ones(X_test.shape[0], dtype=bool)
+        mask[val_indices] = False
+    
+        X_test = X_test[mask]
+        Y_test = Y_test[mask]
+            
+        return X_train, Y_train, X_val, Y_val, X_test, Y_test
+        
+        
     def get_inverse_hvp_lissa(self, v, scale=10000.0, damping=0.0, num_samples=1, recursion_depth=1000):
         """
         Desc:
