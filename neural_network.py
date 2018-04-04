@@ -252,8 +252,8 @@ class NeuralNetwork(object):
                     K.learning_phase(): 0
                 } 
                 grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-                x_adv = x[i] + eps*np.sign(grad[0])
-                x_adv[i] = np.clip(x_adv, clip_min, clip_max)
+                x_adv_raw = x[i] + eps*np.sign(grad[0])
+                x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
             
         elif attack == 'CW':
             K.set_learning_phase(0)
