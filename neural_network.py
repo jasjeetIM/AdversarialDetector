@@ -233,7 +233,7 @@ class NeuralNetwork(object):
             gradient[i,:] = grad.reshape(inp_shape)
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None):
+    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -252,7 +252,8 @@ class NeuralNetwork(object):
                     K.learning_phase(): 0
                 } 
                 grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-                x_adv[i] = x[i] + eps*np.sign(grad[0])
+                x_adv = x[i] + eps*np.sign(grad[0])
+                x_adv[i] = np.clip(x_adv, clip_min, clip_max)
             
         elif attack == 'CW':
             K.set_learning_phase(0)
@@ -265,17 +266,22 @@ class NeuralNetwork(object):
                 adv_ys = y
                 guide_inp = x_tar
                 yname = "y_target"
+                use_cos_norm_reg = True
             else:     
                 yname = 'y'
                 adv_ys = None
                 guide_inp = None
+                use_cos_norm_reg = False
                    
             cw_params = {'binary_search_steps': 1,
                  yname: adv_ys,
                  'guide_img': guide_inp,
                  'max_iterations': iterations,
+                 'use_cos_norm_reg': use_cos_norm_reg,
                  'learning_rate': 0.1,
                  'batch_size': 1,
+                  'clip_min': clip_min,
+                  'clip_max': clip_max,
                  'initial_const': 10}     
                 
               
@@ -290,8 +296,8 @@ class NeuralNetwork(object):
                           yname: None,
                           'eps_iter': eps/float(iterations),
                           'nb_iter': iterations,
-                          'clip_min': 0.,
-                          'clip_max': 1.}
+                          'clip_min': clip_min,
+                          'clip_max': clip_max}
             x_adv = bim.generate_np(x, **bim_params)
         return x_adv
         
@@ -357,7 +363,7 @@ class NeuralNetwork(object):
         x_perturbed: perturbed version of x
         """
         if perturbation == 'FGSM':
-            x_perturbed = self.get_adversarial_version(x,y,eps,attack='FGSM', eps=eps)
+            x_perturbed = self.get_adversarial_version(x,y,attack='FGSM', eps=eps)
             
         elif perturbation == 'CW':
             x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar)
