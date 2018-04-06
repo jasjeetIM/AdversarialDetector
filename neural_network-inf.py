@@ -87,6 +87,18 @@ class NeuralNetwork(object):
 
         # Setup gradients 
         self.grad_loss_wrt_param = tf.gradients(self.training_loss, self.params)
+      
+        #Required for HVP - only works with models that are twice differntiable
+        if dataset.lower() == 'mnist-inf' or dataset.lower() == 'cifar2-inf':
+            self.v_placeholder = [tf.placeholder(tf.float32, shape=a.get_shape()) for a in self.params]
+            self.hessian_vector = util.hessian_vector_product(self.training_loss, self.params, self.v_placeholder)
+           # Because tf.gradients auto accumulates, we probably don't need the add_n (or even reduce_sum)        
+            self.influence_op = tf.add_n(
+              [tf.reduce_sum(tf.multiply(a, array_ops.stop_gradient(b))) for a, b in zip(self.grad_loss_wrt_param, self.v_placeholder)])
+
+            #Required for calculation of influce of perturbation of data point on test point
+            self.grad_influence_wrt_input_op = tf.gradients(self.influence_op, self.input_placeholder)
+            
         self.grad_loss_wrt_input = tf.gradients(self.training_loss, self.input_placeholder)        
         
         #Load model parameters from file or initialize 
@@ -195,7 +207,78 @@ class NeuralNetwork(object):
             
         return X_train, Y_train, X_val, Y_val, X_test, Y_test
         
+        
+    def get_inverse_hvp_lissa(self, v, scale=10000.0, damping=0.0, num_samples=1, recursion_depth=1000):
+        """
+        Desc:
+            Lissa algorithm used for approximating the inverse HVP
+        Param:
+            v(np.array): Vector containing gradient of loss wrt a parameter for a test point
+            scale(float): scaling float for the hvp
+            damping(float): 
+            num_samples(int): number of times to calculate HVP for controlling variance
+            recursion_depth(int): Number of training samples to use for recursively estimating HVP
+        """    
+        inverse_hvp = None
+        print_iter = recursion_depth / 10
 
+        for i in range(num_samples):
+            samples = np.random.choice(len(self.train_data), size=recursion_depth)
+           
+            cur_estimate = v
+
+            for j in range(recursion_depth):
+           
+                batch_xs= self.train_data[samples[j],:].reshape(self.input_shape)
+                batch_ys = self.train_labels[samples[j]].reshape(self.label_shape)
+                feed_dict = {self.input_placeholder: batch_xs, self.labels_placeholder: batch_ys, K.learning_phase(): 0}
+                feed_dict = self.update_feed_dict_with_v_placeholder(feed_dict, cur_estimate)
+                
+                
+                hessian_vector_val = self.sess.run(self.hessian_vector, feed_dict=feed_dict)
+                cur_estimate = [a + (1-damping) * b - c/scale for (a,b,c) in zip(v, cur_estimate, hessian_vector_val)]    
+                
+
+                # Update: v + (I - Hessian_at_x) * cur_estimate
+                if (j % print_iter == 0) or (j == recursion_depth - 1):
+                    feed_dict = self.update_feed_dict_with_v_placeholder(feed_dict, cur_estimate)
+
+            if inverse_hvp is None:
+                inverse_hvp = [b/scale for b in cur_estimate]
+            else:
+                inverse_hvp = [a + b/scale for (a, b) in zip(inverse_hvp, cur_estimate)]  
+
+        inverse_hvp = [a/num_samples for a in inverse_hvp]
+       
+        return inverse_hvp 
+        
+
+    def get_influence_on_test_loss(self, train_image, train_label, inverse_hvp):
+        """
+        Desc:
+            Calculate the influence of upweighting train_image on the network loss
+            of test image used in inverse_hvp.
+        Param:
+            train_image(np array): training image used to calculate influence on Loss wrt a test point
+            train_label(np array): one hot label of train_image
+            inverse_hvp(np array): inverse hvp calculated wrt the test point
+        
+        """
+        #Fill the feed dict with the training example 
+        input_feed = train_image.reshape(self.input_shape)
+        labels_feed = train_label.reshape(self.label_shape)
+        
+        feed_dict = {
+            self.input_placeholder: input_feed,
+            self.labels_placeholder: labels_feed,
+            K.learning_phase(): 0
+        } 
+                
+        grad_loss_wrt_train_input = self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict)   
+        inf_of_train_on_test_loss = np.dot(np.concatenate(inverse_hvp), np.concatenate(grad_loss_wrt_train_input)) 
+        return inf_of_train_on_test_loss
+
+    
     def get_loss_op(self, logits, labels):
         """
         Desc:
@@ -333,6 +416,43 @@ class NeuralNetwork(object):
         return x_rand
     
     
+    def get_inverse_hvp(self, test_point, test_label):
+        """
+        Desc:
+            Return the inverse Hessian Vector product for test_point.
+        """
+        
+        #Fill the feed dict with the test example
+        input_feed = test_point.reshape(self.input_shape) 
+        labels_feed = test_label.reshape(self.label_shape)
+        
+        feed_dict = {
+            self.input_placeholder: input_feed,
+            self.labels_placeholder: labels_feed,
+            K.learning_phase(): 0
+        }
+
+        v = self.sess.run(self.grad_loss_wrt_param, feed_dict=feed_dict)
+        
+        v_= np.array([])
+        for j in range(len(v)):
+            layer_size = np.prod(v[j].shape) 
+            v_ = np.concatenate((v_, np.reshape(v[j], (layer_size))), axis=0)
+        
+        
+        if (np.linalg.norm(v_)) == 0.0:
+            print ('Error: Loss was 0.0 at test point %d' % test_idx)
+            return
+        
+        
+        inverse_hvp = self.get_inverse_hvp_lissa(v)
+        inverse_hvp_ = np.array([])
+        for j in range(len(inverse_hvp)):
+            layer_size = np.prod(inverse_hvp[j].shape) 
+            inverse_hvp_ = np.concatenate((inverse_hvp_, np.reshape(inverse_hvp[j], (layer_size))), axis=0)
+            
+        return inverse_hvp_
+    
     def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
@@ -412,3 +532,166 @@ class NeuralNetwork(object):
 
         self.model.evaluate(self.test_data, self.test_labels, batch_size=self.batch_size)
     
+    def update_feed_dict_with_v_placeholder(self, feed_dict, vec):
+        """
+        Desc:
+            Utility function for updating v_placeholder and feed_dict
+        """
+        for pl_block, vec_block in zip(self.v_placeholder, vec):
+            feed_dict[pl_block] = vec_block  
+        return feed_dict
+
+    def evaluate_influence_matrix(self, use_grad_matrix=False, use_hvp_matrix=False, num_train_samples=1000, inf_save_path='', hvp_save_path='', grad_save_path='',grad_matrix_path='', hvp_matrix_path='',test_points_path='', test_labels_path='',seed=SEED,verbose=True):
+        """
+            Desc:
+                Calculate influence matrix of training points on test points.
+            Params:
+              use_grad_matrix: load up a calculated gradient matrix or create a new matrix
+              use_hvp_matrix: load up a calculated hvp matrix or create a new matrix
+              num_train_samples: number of training samples to use for calculating influence
+              inf_save_path: path to save the influence matrix
+              hvp_save_path: path to save the hvp matrix
+              grad_save_path: path to save the gradient matrix
+              hvp_matrix_path: path to load up a saved hvp matrix
+              grad_matrix_path: path to load up gradients matrix for training points
+              seed: seed to reproduce experiments
+
+              
+          @return:
+              influence_matrix: matrix of size test_points x training_points
+              hvp_matrix: test_points x num_params matrix
+              grad_matrix: train_points x num_params matrix
+              
+        """
+        
+        if verbose:
+            print ('Getting gradients...')
+            
+        #Get training gradients
+        if use_grad_matrix:
+            train_gradients = np.load(grad_matrix_path)
+        
+        else:
+            random_data_indices = self.gen_rand_indices(low=0,high=self.train_data.shape[0],seed=seed, num_samples=num_train_samples)
+            random_train_data = self.train_data[random_data_indices]
+            random_train_labels = self.train_labels[random_data_indices]
+            train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
+        
+        if verbose:
+            print ('Computed gradients. Saving to file')
+        if grad_save_path != '':
+            np.save(grad_save_path, train_gradients)    # .npy extension is added if not given
+          
+        if verbose:
+            print ('Saved gradients.\nGetting Inverse HVP for test points')
+            
+        #Perform influence calculation by loading hvp matrix or calculating it
+        if use_hvp_matrix:
+            hvp_matrix = np.load(hvp_matrix_path)
+        
+        else:
+            #We need test points for which to calculate influence
+            assert(os.path.isfile(test_points_path))
+            assert(os.path.isfile(test_labels_path))
+            test_points = np.load(test_points_path)
+            test_labels = np.load(test_labels_path)
+            
+            hvp_matrix = np.zeros((test_points.shape[0]*self.num_classes, self.num_params))
+               
+            #Build up hvp_matrix
+            for idx, img_lab in enumerate(zip(test_points, test_labels)):
+                inverse_hvp = self.get_inverse_hvp(img_lab[0], img_lab[1])
+                hvp_matrix[idx,:] = inverse_hvp
+        
+        if verbose:      
+            print ('Done Inverse HVP.\nComputing influence\n')   
+            
+        #Perform dot product for influence
+        inf_matrix = np.dot(hvp_matrix, train_gradients.T)
+        
+        if verbose:
+            print ('Done computing Influence.\nSaving matrices')
+
+        #Save results
+        if inf_save_path != '':
+            np.save(inf_save_path, inf_matrix)
+        if hvp_save_path != '':
+            np.save(hvp_save_path, hvp_matrix)
+        if verbose:
+            print ('Saved matrices')
+            
+        return inf_matrix, hvp_matrix, train_gradients
+ 
+    def evaluate_similarity_matrix(self, use_train_grad_matrix=False, use_test_grad_matrix=False, num_train_samples=1000, sim_save_path='', train_grad_save_path='',test_grad_save_path='', train_grad_matrix_path='', test_grad_matrix_path='', test_points_path='', test_labels_path='',seed=SEED,verbose=True):
+        """
+            Desc:
+                Calculate influence matrix of training points on test points.
+            Params:
+              use_train_grad_matrix: load up a calculated gradient matrix for training pts or create a new matrix
+              use_test_grad_matrix: load up a calculated gradient matrix for test points or create a new matrix
+              num_train_samples: number of training samples to use for calculating influence
+              sim_save_path: path to save the influence matrix
+              test_grad_save_path: path to save the gradient matrix for test points
+              train_grad_save_path: path to save the gradient matrix for train points
+              test_grad_matrix_path: path to load up a saved gradients matrix for test points
+              train_grad_matrix_path: path to load up gradients matrix for training points
+              
+          @return:
+              similarity_matrix: matrix of size test_points x training_points
+              test_grad_matrix: test_points x num_params matrix
+              train_grad_matrix: train_points x num_params matrix
+              
+        """
+        
+        if verbose:
+            print ('Getting gradients for training points...')
+                   
+        #Get training gradients
+        if use_train_grad_matrix:
+            train_gradients = np.load(train_grad_matrix_path)
+        
+        else:
+            random_data_indices = self.gen_rand_indices(low=0,high=self.train_data.shape[0],seed=seed, num_samples=num_train_samples)
+            random_train_data = self.train_data[random_data_indices]
+            random_train_labels = self.train_labels[random_data_indices]
+            train_gradients = self.get_gradients_wrt_params(random_train_data, random_train_labels)
+        
+        if verbose:
+            print ('Computed gradients. Saving to file')
+                   
+        if train_grad_save_path != '':
+            np.save(train_grad_save_path, train_gradients)
+        if verbose:
+            print ('Saved gradients.\nGetting gradients for test points')
+        
+        if use_test_grad_matrix:
+            test_gradients = np.load(test_grad_matrix_path)
+   
+        else:
+            #We need test points for which to calculate influence
+            assert(os.path.isfile(test_points_path))
+            assert(os.path.isfile(test_labels_path))
+            test_points = np.load(test_points_path)
+            test_labels = np.load(test_labels_path)
+            
+            test_gradients = np.array(self.get_gradients_wrt_params(test_points, test_labels))
+        if verbose:   
+            print ('Done computing test gradients.\nComputing similarity')   
+            
+        #Perform dot product
+        sim_matrix = np.dot(test_gradients, train_gradients.T)
+        
+        if verbose:       
+            print ('Done similarity.\nSaving matrices')
+
+        #Save results
+        if sim_save_path != '':
+            np.save(sim_save_path, sim_matrix)
+        if test_grad_save_path != '':
+            np.save(test_grad_save_path,test_gradients)
+        if verbose:
+            print ('Done saving matrices.')
+            
+        return sim_matrix, test_gradients, train_gradients
+    
+  

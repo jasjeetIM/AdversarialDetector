@@ -26,35 +26,22 @@ class CNN(NeuralNetwork):
     def __init__(self, non_linearity='relu', **kwargs):
         """
         Params:
-        non_linearity(str): can be 'relu', 'tanh', 'sigmoid'
+        input_side(int): size of the y-axis. We are assuming x = y 
+        input_channels(int): number of input channels in the input
+        non_linearity(str): can be 'tanh', 'sigmoid'
+        conv[1,2]_channels(int): number of channels in the conv filter
+       
         """
         
         self.non_linearity = non_linearity
+
         super(CNN, self).__init__(**kwargs)
         
     def create_model(self, dataset='mnist'):
         """
         Create a Keras Sequential Model
         """
-        #Models using pooling layers cannot take second derivative. 
-        #Hence attacker cannot create optimizer against those models.
-
         if dataset.lower() == 'mnist':
-            layers = [
-                Conv2D(32, (5, 5), padding='valid', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
-                Activation(self.non_linearity),
-                Conv2D(64, (5, 5), name='conv2'),
-                Activation(self.non_linearity),
-                Dropout(self.dropout_prob),
-                Flatten(),
-                Dense(128, name='dense1'),
-                Activation(self.non_linearity),
-                Dropout(self.dropout_prob),
-                Dense(self.num_classes, name='logits'),
-                Activation('softmax')
-            ]
-        
-        elif dataset.lower() == 'mnist_pool':
             layers = [
                 Conv2D(32, (5, 5), padding='valid', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
                 Activation(self.non_linearity),
@@ -71,20 +58,62 @@ class CNN(NeuralNetwork):
                 Activation('softmax')
             ]
             
-        elif dataset.lower() == 'svhn' or dataset.lower() == 'cifar2':
+            
+            
+        elif dataset.lower() == 'mnist-inf':
+            layers = [
+                Conv2D(32, (5, 5), padding='valid', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
+                Activation(self.non_linearity),
+                Conv2D(64, (5, 5), name='conv2'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Flatten(),
+                Dense(128, name='dense1'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(self.num_classes, name='logits'),
+                Activation('softmax')
+            ]
+            
+        elif dataset.lower() == 'cifar2-small':
+            layers = [
+                Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(64, (3, 3), padding='same', name='conv2'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(128, (3, 3), padding='same', name='conv3'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(128, (3, 3), padding='same', name='conv4'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Flatten(),
+                Dropout(self.dropout_prob),
+                Dense(1024, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(self.num_classes, name='logits'),
+                Activation('softmax')
+            ]        
+        elif dataset.lower() == 'svhn-large':
             layers = [
                 Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
                 Activation(self.non_linearity),
                 Conv2D(32, (3, 3), padding='same', name='conv2'),
                 Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
                 Conv2D(64, (3, 3), padding='same', name='conv3'),
                 Activation(self.non_linearity),
                 Conv2D(64, (3, 3), padding='same', name='conv4'),
                 Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
                 Conv2D(128, (3, 3), padding='same', name='conv5'),
                 Activation(self.non_linearity),
                 Conv2D(128, (3, 3), padding='same', name='conv6'),
                 Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
                 Flatten(),
                 Dropout(self.dropout_prob),
                 Dense(1024, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
@@ -95,10 +124,11 @@ class CNN(NeuralNetwork):
                 Dropout(self.dropout_prob),
                 Dense(self.num_classes, name='logits'),
                 Activation('softmax')
-            ]    
+            ]
             
             
-        elif dataset.lower() == 'svhn_pool' or dataset.lower() == 'cifar2_pool':
+        
+        elif dataset.lower() == 'cifar2-large':
             layers = [
                 Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
                 Activation(self.non_linearity),
@@ -115,6 +145,55 @@ class CNN(NeuralNetwork):
                 Conv2D(128, (3, 3), padding='same', name='conv6'),
                 Activation(self.non_linearity),
                 MaxPooling2D(pool_size=(2, 2)),
+                Flatten(),
+                Dropout(self.dropout_prob),
+                Dense(1024, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(512, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense2'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(self.num_classes, name='logits'),
+                Activation('softmax')
+            ]
+        elif dataset.lower() == 'cifar2-small':
+            layers = [
+                Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(64, (3, 3), padding='same', name='conv2'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(128, (3, 3), padding='same', name='conv3'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Conv2D(128, (3, 3), padding='same', name='conv4'),
+                Activation(self.non_linearity),
+                MaxPooling2D(pool_size=(2, 2)),
+                Flatten(),
+                Dropout(self.dropout_prob),
+                Dense(1024, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(self.num_classes, name='logits'),
+                Activation('softmax')
+            ]    
+            
+            
+        elif dataset.lower() == 'cifar10-inf':
+            layers = [
+                Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
+                Activation(self.non_linearity),
+                Conv2D(32, (3, 3), padding='same', name='conv2'),
+                Activation(self.non_linearity),
+                Conv2D(64, (3, 3), padding='same', name='conv3'),
+                Activation(self.non_linearity),
+                Conv2D(64, (3, 3), padding='same', name='conv4'),
+                Activation(self.non_linearity),
+                Conv2D(128, (3, 3), padding='same', name='conv5'),
+                Activation(self.non_linearity),
+                Conv2D(128, (3, 3), padding='same', name='conv6'),
+                Activation(self.non_linearity),
                 Flatten(),
                 Dropout(self.dropout_prob),
                 Dense(1024, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
