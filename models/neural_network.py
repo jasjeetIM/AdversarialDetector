@@ -251,7 +251,7 @@ class NeuralNetwork(object):
             gradient[i,:] = grad.reshape(inp_shape)
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0):
+    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -284,12 +284,12 @@ class NeuralNetwork(object):
                 adv_ys = y
                 guide_inp = x_tar
                 yname = "y_target"
-                use_cos_norm_reg = True
+                use_cos_norm_reg = use_cos_norm_reg
             else:     
                 yname = 'y'
                 adv_ys = None
                 guide_inp = None
-                use_cos_norm_reg = False
+                use_cos_norm_reg = use_cos_norm_reg
                    
             cw_params = {'binary_search_steps': 1,
                  yname: adv_ys,
@@ -333,7 +333,7 @@ class NeuralNetwork(object):
         return x_rand
     
     
-    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None):
+    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None, use_cos_norm_reg=False):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -348,7 +348,7 @@ class NeuralNetwork(object):
             x_perturbed = self.get_adversarial_version(x,y,attack='FGSM', eps=eps)
             
         elif perturbation == 'CW':
-            x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar)
+            x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, use_cos_norm_reg=use_cos_norm_reg)
         elif perturbation == 'BIM':
             x_perturbed = self.get_adversarial_version(x,y,attack='BIM',iterations=iterations,eps=eps)
         else:
