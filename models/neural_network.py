@@ -14,7 +14,6 @@ import os, time, math
 from keras import backend as K
 from keras.models import Sequential
 from keras.utils import np_utils
-import influence.util as util
 
 SEED = 12
 
@@ -117,7 +116,7 @@ class NeuralNetwork(object):
             
             
         elif dataset == 'svhn':
-            X_train, Y_train, X_test, Y_test, _, _ = np.load('./svhn_data.npy')
+            X_train, Y_train, X_test, Y_test, _, _ = np.load('../data/svhn_data.npy')
 
             X_train = np.transpose(X_train, (3,0,1,2))
             X_test = np.transpose(X_test, (3,0,1,2))

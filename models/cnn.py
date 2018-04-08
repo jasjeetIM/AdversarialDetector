@@ -15,7 +15,7 @@ from keras.regularizers import l2
 from keras.models import Sequential, model_from_json
 from keras.layers import Input, Dense, Dropout, Activation, Flatten, Conv2D, MaxPooling2D
 
-from influence.neural_network import NeuralNetwork
+from models.neural_network import NeuralNetwork
 
 SEED = 12
 
