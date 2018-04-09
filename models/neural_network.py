@@ -116,13 +116,18 @@ class NeuralNetwork(object):
             
             
         elif dataset == 'svhn':
-            X_train, Y_train, X_test, Y_test, _, _ = np.load('../data/svhn_data.npy')
-
+            X_train, Y_train, X_test, Y_test, x_extra, y_extra = np.load('../data/svhn_data.npy')
+            
             X_train = np.transpose(X_train, (3,0,1,2))
             X_test = np.transpose(X_test, (3,0,1,2))
+            x_extra = np.transpose(x_extra, (3,0,1,2))
 
             Y_train = Y_train.reshape((Y_train.shape[0], ))
             Y_test = Y_test.reshape((Y_test.shape[0], ))
+            y_extra = y_extra.reshape((y_extra.shape[0],))
+            
+            X_train = np.concatenate((X_train, x_extra), axis=0)
+            Y_train = np.concatenate((Y_train, y_extra), axis=0)
 
             Y_train[np.where(Y_train == 10)] = 0
             Y_test[np.where(Y_test == 10)] = 0

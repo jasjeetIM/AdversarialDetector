@@ -71,7 +71,7 @@ class CNN(NeuralNetwork):
                 Activation('softmax')
             ]
             
-        elif dataset.lower() == 'svhn' or dataset.lower() == 'cifar2':
+        elif dataset.lower() == 'cifar2':
             layers = [
                 Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
                 Activation(self.non_linearity),
@@ -85,7 +85,22 @@ class CNN(NeuralNetwork):
                 Dense(self.num_classes, name='logits'),
                 Activation('softmax')
             ]    
-            
+        elif dataset.lower() == 'svhn':
+            layers = [
+                Conv2D(32, (3, 3), padding='valid', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
+                Activation(self.non_linearity),
+                Conv2D(64, (3, 3), padding='valid', name='conv2'),
+                Activation(self.non_linearity),
+                Conv2D(128, (3, 3), padding='valid', name='conv3'),
+                Activation(self.non_linearity),
+                Flatten(),
+                Dropout(self.dropout_prob),
+                Dense(256, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
+                Activation(self.non_linearity),
+                Dropout(self.dropout_prob),
+                Dense(self.num_classes, name='logits'),
+                Activation('softmax')
+            ]        
             
         elif dataset.lower() == 'svhn_pool' or dataset.lower() == 'cifar2_pool':
             layers = [
