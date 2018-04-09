@@ -7,7 +7,7 @@ from tensorflow.python.framework import ops
 from tensorflow.python.ops import array_ops, math_ops
 from keras.datasets import cifar10, mnist
 from cleverhans.utils_keras import KerasModelWrapper
-from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod
+from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod, DeepFool, SaliencyMapMethod
 
 import numpy as np
 import os, time, math
@@ -255,7 +255,7 @@ class NeuralNetwork(object):
             gradient[i,:] = grad.reshape(inp_shape)
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False):
+    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, nb_candidate=10):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -308,7 +308,26 @@ class NeuralNetwork(object):
                 
               
             x_adv = cw.generate_np(adv_inputs,**cw_params)
-        
+            
+        elif attack == 'DF':
+            K.set_learning_phase(0)
+            model = KerasModelWrapper(self.model)
+            df = DeepFool(model, sess=self.sess)
+            df_params = {'nb_candidate': nb_candidate}
+            x_adv = df.generate_np(x,**df_params)
+       
+    
+        elif attack == 'JSMA':
+            K.set_learning_phase(0)
+            model = KerasModelWrapper(self.model)
+            jsma = SaliencyMapMethod(model,sess=self.sess)
+            jsma_params = {'theta': 1., 
+                           'gamma': 0.1,
+                           'clip_min': clip_min, 
+                           'clip_max': clip_max,
+                           'y_target': None}
+            x_adv = jsma.generate_np(x, **jsma_params)
+            
         elif attack == 'BIM':
             K.set_learning_phase(0)
             model = KerasModelWrapper(self.model)
@@ -337,7 +356,7 @@ class NeuralNetwork(object):
         return x_rand
     
     
-    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None, use_cos_norm_reg=False):
+    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None, use_cos_norm_reg=False, nb_candidate=10):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -355,6 +374,10 @@ class NeuralNetwork(object):
             x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, use_cos_norm_reg=use_cos_norm_reg)
         elif perturbation == 'BIM':
             x_perturbed = self.get_adversarial_version(x,y,attack='BIM',iterations=iterations,eps=eps)
+        elif perturbation == 'DF':
+            x_perturbed = self.get_adversarial_version(x,y,attack='DF', nb_candidate=nb_candidate)
+        elif perturbation == 'JSMA':
+            x_perturbed = self.get_adversarial_version(x,y,attack='JSMA')
         else:
             x_perturbed = self.get_random_version(x,y,eps)
         
