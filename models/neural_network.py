@@ -276,7 +276,41 @@ class NeuralNetwork(object):
                 grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
                 x_adv_raw = x[i] + eps*np.sign(grad[0])
                 x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
-            
+        
+        elif attack=='BIM-A':
+            x_adv = np.zeros_like(x)
+            eps_ = eps / float(iterations)
+            for i in range(x.shape[0]): 
+                x_adv_clipped = x[i]
+                for k in range(iterations):
+                    x_curr = x_adv_clipped
+                    feed_dict = {
+                        self.input_placeholder: x_curr.reshape(self.input_shape) ,
+                        self.labels_placeholder: y[i].reshape(self.label_shape),
+                        K.learning_phase(): 0
+                        } 
+                    grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
+                    x_adv_raw = x_curr + eps_*np.sign(grad[0])
+                    x_adv_clipped = x_adv_raw.clip(clip_min, clip_max)
+                    #Check if the label has changed. Stop if so.
+                    if np.argmax(self.model.predict(x_adv_clipped.reshape(*self.input_shape))) != np.argmax(y[i]):
+                        x_adv[i] = x_adv_clipped
+                        break
+       
+        elif attack == 'BIM-B':
+            K.set_learning_phase(0)
+            model = KerasModelWrapper(self.model)
+            bim = BasicIterativeMethod(model, sess=self.sess)
+            yname = 'y'
+            bim_params = {'eps': eps,
+                          yname: None,
+                          'eps_iter': eps/float(iterations),
+                          'nb_iter': iterations,
+                          'clip_min': clip_min,
+                          'clip_max': clip_max}
+            x_adv = bim.generate_np(x, **bim_params)             
+        
+        
         elif attack == 'CW':
             K.set_learning_phase(0)
             # Instantiate a CW attack object
@@ -328,18 +362,6 @@ class NeuralNetwork(object):
                            'y_target': None}
             x_adv = jsma.generate_np(x, **jsma_params)
             
-        elif attack == 'BIM':
-            K.set_learning_phase(0)
-            model = KerasModelWrapper(self.model)
-            bim = BasicIterativeMethod(model, sess=self.sess)
-            yname = 'y'
-            bim_params = {'eps': eps,
-                          yname: None,
-                          'eps_iter': eps/float(iterations),
-                          'nb_iter': iterations,
-                          'clip_min': clip_min,
-                          'clip_max': clip_max}
-            x_adv = bim.generate_np(x, **bim_params)
         return x_adv
         
     def get_random_version(self, x, y, eps=0.3,min_clip=0.0, max_clip=1.0):
@@ -372,8 +394,10 @@ class NeuralNetwork(object):
             
         elif perturbation == 'CW':
             x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, use_cos_norm_reg=use_cos_norm_reg)
-        elif perturbation == 'BIM':
-            x_perturbed = self.get_adversarial_version(x,y,attack='BIM',iterations=iterations,eps=eps)
+        elif perturbation == 'BIM-A':
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM-A',iterations=iterations,eps=eps)
+        elif perturbation == 'BIM-B':
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM-B',iterations=iterations,eps=eps)
         elif perturbation == 'DF':
             x_perturbed = self.get_adversarial_version(x,y,attack='DF', nb_candidate=nb_candidate)
         elif perturbation == 'JSMA':
