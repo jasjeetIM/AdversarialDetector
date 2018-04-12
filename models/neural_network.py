@@ -255,7 +255,92 @@ class NeuralNetwork(object):
             gradient[i,:] = grad.reshape(inp_shape)
         return gradient
     
-    def get_adversarial_version(self, x, y, eps=0.3, iterations=100000,attack='FGSM', targeted=False, x_tar=None, clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, nb_candidate=10):
+    
+    def create_wb_fgsm_graph(self):
+        """Create a TF graph that will be used for Whitebox FGSM and return grad operation"""
+        #Create/modify TF graph
+        x_guide = tf.placeholder(dtype= tf.float32, shape=self.input_shape)
+        y_guide = tf.placeholder(dtype = tf.float32, shape=self.label_shape)
+            
+        guide_logits, guide_preds = self.get_logits_preds(x_guide)
+        guide_loss = self.get_loss_op(guide_logits, y_guide)
+            
+        guide_grad = tf.gradients(guide_loss, self.params)
+        x_grad = self.grad_loss_wrt_param
+            
+        for j in range(len(guide_grad)):
+            if j == 0:
+                temp_x = tf.reshape(x_grad[j], [-1])
+                temp_guide = tf.reshape(guide_grad[j], [-1])
+            else:
+                temp_x_t = tf.reshape(x_grad[j], [-1])
+                temp_guide_t = tf.reshape(guide_grad[j], [-1])
+                temp_x = tf.concat([temp_x, temp_x_t], 0)
+                temp_guide = tf.concat([temp_guide, temp_guide_t], 0)
+
+        x_grad = temp_x
+        guide_grad = temp_guide
+            
+        #Define cos sim based loss
+        loss_sim = tf.reduce_sum(
+                            tf.multiply(x_grad, guide_grad)) / (tf.norm(x_grad)*tf.norm(guide_grad))
+        loss_norm = -tf.norm(x_grad)
+        loss_total = self.training_loss + loss_sim + loss_norm
+        total_grad = tf.gradients(loss_total, self.input_placeholder)   
+        
+        return x_guide, y_guide, total_grad
+        
+    def fgsm_attack(self, x, y=None, eps=0.3, clip_min=0.0, clip_max=1.0):
+        """Create FGSM attack points for each row of x"""
+        x_adv = np.zeros_like(x)
+        for i in range(x.shape[0]): 
+            feed_dict = {
+                    self.input_placeholder: x[i].reshape(self.input_shape) ,
+                    self.labels_placeholder: y[i].reshape(self.label_shape),
+                    K.learning_phase(): 0
+             } 
+            grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
+            x_adv_raw = x[i] + eps*np.sign(grad[0])
+            x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
+        return x_adv
+    
+    def visualize(self, image):
+        import matplotlib
+        import matplotlib.pyplot as plt
+        
+        plt.figure(figsize=(1, 1))
+        if image.shape[-1] == 1:
+            # image is in black and white
+            image = image[:, :, 0]
+            plt.imshow(image, cmap='Greys')
+        else:
+            # image is in color
+            plt.imshow(image)
+        plt.axis('off')
+        plt.show()
+
+
+    
+    def fgsm_wb_attack(self, x, y=None, eps=0.3, clip_min=0.0, clip_max=1.0, x_tar=None, y_tar=None, x_guide=None, y_guide=None, total_grad=None):
+        """Create Whitebox FGSM attack points """
+        x_adv = np.zeros_like(x)
+            
+        #Iterate over all samples to be perturbed
+        for i in range(x.shape[0]): 
+            feed_dict = {
+                self.input_placeholder: x[i].reshape(self.input_shape) ,
+                self.labels_placeholder: y[i].reshape(self.label_shape),
+                x_guide: x_tar[i].reshape(self.input_shape), 
+                y_guide: y_tar[i].reshape(self.label_shape),
+                K.learning_phase(): 0
+             } 
+            grad = self.sess.run(total_grad, feed_dict=feed_dict)[0]
+            x_adv_raw = x[i] + eps*np.sign(grad[0])
+            x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
+            
+        return x_adv
+    
+    def get_adversarial_version(self, x, y=None, eps=0.3, iterations=10000,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, nb_candidate=10):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -266,50 +351,71 @@ class NeuralNetwork(object):
         
         """
         if attack=='FGSM':
-            x_adv = np.zeros_like(x)
-            for i in range(x.shape[0]): 
-                feed_dict = {
-                    self.input_placeholder: x[i].reshape(self.input_shape) ,
-                    self.labels_placeholder: y[i].reshape(self.label_shape),
-                    K.learning_phase(): 0
-                } 
-                grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-                x_adv_raw = x[i] + eps*np.sign(grad[0])
-                x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
+            x_adv = self.fgsm_attack(x,y, eps=eps, clip_min=clip_min, clip_max=clip_max)
+       
+        if attack=='FGSM-WB':
+            #Create matrix to store adversarial samples
+            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
+            x_adv = self.fgsm_wb_attack(x,y=y,eps=eps,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar, y_tar=y_tar, x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)
         
+        #We implement BIM-A as cleverhans does not directly support it
         elif attack=='BIM-A':
             x_adv = np.zeros_like(x)
             eps_ = eps / float(iterations)
             for i in range(x.shape[0]): 
                 x_adv_clipped = x[i]
                 for k in range(iterations):
-                    x_curr = x_adv_clipped
-                    feed_dict = {
-                        self.input_placeholder: x_curr.reshape(self.input_shape) ,
-                        self.labels_placeholder: y[i].reshape(self.label_shape),
-                        K.learning_phase(): 0
-                        } 
-                    grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-                    x_adv_raw = x_curr + eps_*np.sign(grad[0])
-                    x_adv_clipped = x_adv_raw.clip(clip_min, clip_max)
+                    x_curr = np.array([x_adv_clipped])
+                    y_curr = np.array([y[i]])
+                    x_adv_clipped = self.fgsm_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max)[0]
                     #Check if the label has changed. Stop if so.
                     if np.argmax(self.model.predict(x_adv_clipped.reshape(*self.input_shape))) != np.argmax(y[i]):
-                        x_adv[i] = x_adv_clipped
                         break
-       
+                x_adv[i] = x_adv_clipped
+                        
         elif attack == 'BIM-B':
-            K.set_learning_phase(0)
-            model = KerasModelWrapper(self.model)
-            bim = BasicIterativeMethod(model, sess=self.sess)
-            yname = 'y'
-            bim_params = {'eps': eps,
-                          yname: None,
-                          'eps_iter': eps/float(iterations),
-                          'nb_iter': iterations,
-                          'clip_min': clip_min,
-                          'clip_max': clip_max}
-            x_adv = bim.generate_np(x, **bim_params)             
+            x_adv = np.zeros_like(x)
+            eps_ = eps / float(iterations)
+            for i in range(x.shape[0]): 
+                x_adv_clipped = x[i]
+                for k in range(iterations):
+                    x_curr = np.array([x_adv_clipped])
+                    y_curr = np.array([y[i]])
+                    x_adv_clipped = self.fgsm_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max)[0]
+                x_adv[i] = x_adv_clipped
+                
+        elif attack=='BIM-A-WB':
+            x_adv = np.zeros_like(x)
+            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
+            eps_ = eps / float(iterations)
+            for i in range(x.shape[0]): 
+                x_adv_clipped = x[i]
+                for k in range(iterations):
+                    x_curr = np.array([x_adv_clipped])
+                    y_curr = np.array([y[i]])
+                    x_tar_curr = np.array([x_tar[i]])
+                    y_tar_curr = np.array([y_tar[i]])
+                    x_adv_clipped = self.fgsm_wb_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar_curr, y_tar=y_tar_curr,x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)[0]
+                    #Check if the label has changed. Stop if so.
+                    if np.argmax(self.model.predict(x_adv_clipped.reshape(*self.input_shape))) != np.argmax(y[i]):
+                        break
+                x_adv[i] = x_adv_clipped
+
         
+                        
+        elif attack=='BIM-B-WB':
+            x_adv = np.zeros_like(x)
+            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
+            eps_ = eps / float(iterations)
+            for i in range(x.shape[0]): 
+                x_adv_clipped = x[i]
+                for k in range(iterations):
+                    x_curr = np.array([x_adv_clipped])
+                    y_curr = np.array([y[i]])
+                    x_tar_curr = np.array([x_tar[i]])
+                    y_tar_curr = np.array([y_tar[i]])
+                    x_adv_clipped = self.fgsm_wb_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar_curr, y_tar=y_tar_curr,x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)[0]
+                x_adv[i] = x_adv_clipped   
         
         elif attack == 'CW':
             K.set_learning_phase(0)
@@ -319,7 +425,7 @@ class NeuralNetwork(object):
             adv_inputs = x
             
             if targeted:
-                adv_ys = y
+                adv_ys = y_tar
                 guide_inp = x_tar
                 yname = "y_target"
                 use_cos_norm_reg = use_cos_norm_reg
@@ -330,6 +436,7 @@ class NeuralNetwork(object):
                 use_cos_norm_reg = use_cos_norm_reg
                    
             cw_params = {'binary_search_steps': 1,
+                 'abort_early': False,
                  yname: adv_ys,
                  'guide_img': guide_inp,
                  'max_iterations': iterations,
@@ -378,7 +485,7 @@ class NeuralNetwork(object):
         return x_rand
     
     
-    def generate_perturbed_data(self, x, y, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None, use_cos_norm_reg=False, nb_candidate=10):
+    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False, nb_candidate=10):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -391,13 +498,18 @@ class NeuralNetwork(object):
         """
         if perturbation == 'FGSM':
             x_perturbed = self.get_adversarial_version(x,y,attack='FGSM', eps=eps)
-            
+        elif perturbation == 'FGSM-WB':
+            x_perturbed = self.get_adversarial_version(x,y,attack='FGSM-WB', eps=eps, x_tar=x_tar, y_tar=y_tar)     
         elif perturbation == 'CW':
-            x_perturbed = self.get_adversarial_version(x,y,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, use_cos_norm_reg=use_cos_norm_reg)
+            x_perturbed = self.get_adversarial_version(x,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, y_tar=y_tar,use_cos_norm_reg=use_cos_norm_reg)
         elif perturbation == 'BIM-A':
             x_perturbed = self.get_adversarial_version(x,y,attack='BIM-A',iterations=iterations,eps=eps)
+        elif perturbation == 'BIM-A-WB':
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM-A-WB',iterations=iterations,eps=eps, x_tar=x_tar, y_tar=y_tar)
         elif perturbation == 'BIM-B':
             x_perturbed = self.get_adversarial_version(x,y,attack='BIM-B',iterations=iterations,eps=eps)
+        elif perturbation == 'BIM-B-WB':
+            x_perturbed = self.get_adversarial_version(x,y,attack='BIM-B-WB',iterations=iterations,eps=eps, x_tar=x_tar, y_tar=y_tar)
         elif perturbation == 'DF':
             x_perturbed = self.get_adversarial_version(x,y,attack='DF', nb_candidate=nb_candidate)
         elif perturbation == 'JSMA':
