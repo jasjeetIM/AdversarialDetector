@@ -86,7 +86,7 @@ class NeuralNetwork(object):
 
         # Setup gradients 
         self.grad_loss_wrt_param = tf.gradients(self.training_loss, self.params)
-        self.grad_loss_wrt_input = tf.gradients(self.training_loss, self.input_placeholder)        
+        self.grad_loss_wrt_input = tf.gradients(self.training_loss, self.input_placeholder)  
         
         #Load model parameters from file or initialize 
         if load_from_file == False:
