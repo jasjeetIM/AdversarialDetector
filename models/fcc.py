@@ -13,15 +13,15 @@ from keras import backend as K
 from keras import regularizers
 from keras.regularizers import l2
 from keras.models import Sequential, model_from_json
-from keras.layers import Input, Dense, Dropout, Activation, Flatten, Conv2D, MaxPooling2D
+from keras.layers import Input, Dense, Dropout, Activation
 
 from models.neural_network import NeuralNetwork
 
 SEED = 14
 
 
-class CNN(NeuralNetwork):
-    """Convolutional Neural Network - 2 hidden layers (for now) """
+class FCC(NeuralNetwork):
+    """Fully Connected Network """
 
     def __init__(self, non_linearity='relu', **kwargs):
         """
@@ -30,44 +30,32 @@ class CNN(NeuralNetwork):
         """
         
         self.non_linearity = non_linearity
-        super(CNN, self).__init__(**kwargs)
+        super(FCC, self).__init__(**kwargs)
         
-    def create_model(self, dataset='mnist'):
+    def create_model(self, dataset='drebin'):
         """
         Create a Keras Sequential Model
         """
         #Models using pooling layers cannot take second derivative. 
         #Hence attacker cannot create optimizer against those models.
 
-        if dataset.lower() == 'mnist':
+        if dataset.lower() == 'drebin':
             layers = [
-                Conv2D(32, (5, 5), padding='valid', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
-                Activation(self.non_linearity),
-                Conv2D(64, (5, 5), name='conv2'),
-                Activation(self.non_linearity),
-                Dropout(self.dropout_prob),
-                Flatten(),
-                Dense(128, name='dense1'),
-                Activation(self.non_linearity),
-                Dropout(self.dropout_prob),
-                Dense(self.num_classes, name='logits'),
+                Dense(64, input_shape=(545333,)),
+                Activation('relu'),
+                Dropout(0.5),
+                Dense(128),
+                Activation('relu'),
+                Dropout(0.5),
+                Dense(64),
+                Activation('relu'),
+                Dropout(0.5),
+                Dense(2),
                 Activation('softmax')
-            ]
-        
-        elif dataset.lower() == 'cifar2':
-            layers = [
-                Conv2D(32, (3, 3), padding='same', input_shape=(self.input_side, self.input_side, self.input_channels), name='conv1'),
-                Activation(self.non_linearity),
-                Conv2D(64, (3, 3), padding='same', name='conv2'),
-                Activation(self.non_linearity),
-                Flatten(),
-                Dropout(self.dropout_prob),
-                Dense(256, kernel_regularizer=l2(0.01), bias_regularizer=l2(0.01), name='dense1'),
-                Activation(self.non_linearity),
-                Dropout(self.dropout_prob),
-                Dense(self.num_classes, name='logits'),
-                Activation('softmax')
-            ]    
+            ] 
+        else: 
+            print('FCC only defined for Drebin dataset')
+            return
             
         model = Sequential()
         for layer in layers:
@@ -92,7 +80,7 @@ class CNN(NeuralNetwork):
         Desc:
             Create input place holders for graph and model.
         """
-        input_shape_all = (None,self.input_side, self.input_side,self.input_channels)
+        input_shape_all = (None,self.input_dim)
         label_shape_all = (None,self.num_classes)
         input_placeholder = tf.placeholder(
             tf.float32, 
@@ -102,7 +90,7 @@ class CNN(NeuralNetwork):
             tf.int32,             
             shape=label_shape_all,
             name='labels_placeholder')
-        input_shape_one = (1,self.input_side, self.input_side,self.input_channels)
+        input_shape_one = (1,self.input_dim)
         label_shape_one = (1,self.num_classes)
         
         return input_placeholder, labels_placeholder, input_shape_one, label_shape_one
@@ -156,9 +144,9 @@ class CNN(NeuralNetwork):
         Desc:
             Reshapes data to original size
         """    
-        self.train_data = self.train_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
-        self.val_data = self.val_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
-        self.test_data = self.test_data.reshape(-1, self.input_side, self.input_side, self.input_channels)
+        self.train_data = self.train_data.reshape(-1, self.input_dim)
+        self.val_data = self.val_data.reshape(-1, self.input_dim)
+        self.test_data = self.test_data.reshape(-1, self.input_dim)
     
         self.train_data = self.train_data.astype('float32')
         self.val_data = self.val_data.astype('float32')

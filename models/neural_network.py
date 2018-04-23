@@ -1,21 +1,24 @@
 from __future__ import division
 from __future__ import print_function
 
+import sys, os
+sys.path.append('../')
+from attacks import *
+
 import tensorflow as tf
-from tensorflow import gradients
-from tensorflow.python.framework import ops
-from tensorflow.python.ops import array_ops, math_ops
 from keras.datasets import cifar10, mnist
 from cleverhans.utils_keras import KerasModelWrapper
 from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod, DeepFool, SaliencyMapMethod
 
 import numpy as np
-import os, time, math
+import os, time, math, pickle
 from keras import backend as K
 from keras.models import Sequential
 from keras.utils import np_utils
+import matplotlib
+import matplotlib.pyplot as plt
 
-SEED = 12
+SEED = 14
 
 
 class NeuralNetwork(object):
@@ -49,9 +52,9 @@ class NeuralNetwork(object):
             self.num_classes = 10
             self.train_data, self.train_labels, self.val_data, self.val_labels, self.test_data, self.test_labels = self.load_dataset('mnist')
         
-        elif 'svhn' in dataset.lower():
-            self.num_classes = 10
-            self.train_data, self.train_labels, self.val_data, self.val_labels, self.test_data, self.test_labels = self.load_dataset('svhn')
+        elif 'drebin' in dataset.lower():
+            self.num_classes = 2
+            self.train_data, self.train_labels, self.val_data, self.val_labels, self.test_data, self.test_labels = self.load_dataset('drebin')
                       
         elif 'cifar2' in dataset.lower():
             self.num_classes = 2
@@ -115,35 +118,13 @@ class NeuralNetwork(object):
             
             
             
-        elif dataset == 'svhn':
-            X_train, Y_train, X_test, Y_test, x_extra, y_extra = np.load('../data/svhn_data.npy')
+        elif dataset == 'drebin':
+            X_train, Y_train, X_val, Y_val, X_test, Y_test = self.load_drebin_data()
             
-            X_train = np.transpose(X_train, (3,0,1,2))
-            X_test = np.transpose(X_test, (3,0,1,2))
-            x_extra = np.transpose(x_extra, (3,0,1,2))
-
-            Y_train = Y_train.reshape((Y_train.shape[0], ))
-            Y_test = Y_test.reshape((Y_test.shape[0], ))
-            y_extra = y_extra.reshape((y_extra.shape[0],))
-            
-            X_train = np.concatenate((X_train, x_extra), axis=0)
-            Y_train = np.concatenate((Y_train, y_extra), axis=0)
-
-            Y_train[np.where(Y_train == 10)] = 0
-            Y_test[np.where(Y_test == 10)] = 0
-
-            Y_train_cat = np.zeros((Y_train.shape[0], 10))
-            Y_test_cat = np.zeros((Y_test.shape[0], 10))
-
-            Y_train_cat[range(Y_train.shape[0]), Y_train] = 1
-            Y_test_cat[range(Y_test.shape[0]), Y_test] = 1
-
-            Y_train = Y_train_cat
-            Y_test = Y_test_cat
-            
-            self.input_side = 32
-            self.input_channels = 3
-            self.input_dim = self.input_side * self.input_side * self.input_channels
+            self.input_side = 1
+            self.input_channels = 1
+            #Hardcode dimensionality
+            self.input_dim = 545333
             
         elif dataset == 'cifar2':
             #Convert cifar10 into cifar2
@@ -208,7 +189,26 @@ class NeuralNetwork(object):
         out = tf.nn.softmax_cross_entropy_with_logits(logits=logits, labels=labels)
         return out
     
+    def train(self, epochs):
+        """
+        Desc:
+            Trains model for a specified number of epochs.
+        """    
+       
+        self.model.fit(
+            self.train_data, 
+            self.train_labels,
+            epochs=epochs,
+            batch_size=128,
+            validation_data=(self.val_data, self.val_labels),
+            verbose=1,
+            shuffle=True
+        )
+
+        self.model.evaluate(self.test_data, self.test_labels, batch_size=self.batch_size)
     
+
+
     def get_gradients_wrt_params(self, X, Y):
         """Get gradients of Loss(X,Y) wrt network params"""
         
@@ -254,92 +254,69 @@ class NeuralNetwork(object):
                     )[0]
             gradient[i,:] = grad.reshape(inp_shape)
         return gradient
+   
+    def load_drebin_data(self, ben_path= '../data/ben_matrix.npy', mal_path='../data/mal_matrix.npy'):
+        ben_data = np.load(ben_path)
+        mal_data = np.load(mal_path)
+    
+        ben_lab = np.zeros((ben_data.shape[0]), dtype=np.int8)
+        mal_lab = np.ones((mal_data.shape[0]), dtype=np.int8)
+        ben_lab = np_utils.to_categorical(ben_lab, 2)
+        mal_lab = np_utils.to_categorical(mal_lab, 2)
     
     
-    def create_wb_fgsm_graph(self):
-        """Create a TF graph that will be used for Whitebox FGSM and return grad operation"""
-        #Create/modify TF graph
-        x_guide = tf.placeholder(dtype= tf.float32, shape=self.input_shape)
-        y_guide = tf.placeholder(dtype = tf.float32, shape=self.label_shape)
-            
-        guide_logits, guide_preds = self.get_logits_preds(x_guide)
-        guide_loss = self.get_loss_op(guide_logits, y_guide)
-            
-        guide_grad = tf.gradients(guide_loss, self.params)
-        x_grad = self.grad_loss_wrt_param
-            
-        for j in range(len(guide_grad)):
-            if j == 0:
-                temp_x = tf.reshape(x_grad[j], [-1])
-                temp_guide = tf.reshape(guide_grad[j], [-1])
-            else:
-                temp_x_t = tf.reshape(x_grad[j], [-1])
-                temp_guide_t = tf.reshape(guide_grad[j], [-1])
-                temp_x = tf.concat([temp_x, temp_x_t], 0)
-                temp_guide = tf.concat([temp_guide, temp_guide_t], 0)
-
-        x_grad = temp_x
-        guide_grad = temp_guide
-            
-        #Define cos sim based loss
-        loss_sim = tf.reduce_sum(
-                            tf.multiply(x_grad, guide_grad)) / (tf.norm(x_grad)*tf.norm(guide_grad))
-        loss_norm = -tf.norm(x_grad)
-        loss_total = self.training_loss + loss_sim + loss_norm
-        total_grad = tf.gradients(loss_total, self.input_placeholder)   
+        X = np.concatenate((ben_data, mal_data), axis=0)
+        Y = np.concatenate((ben_lab, mal_lab), axis=0)
+        del ben_data, mal_data, ben_lab, mal_lab
+        gc.collect()
+    
+        num_samples = X.shape[0]
+    
         
-        return x_guide, y_guide, total_grad
+        num_val = int(.05*num_samples)
+        num_test = int(.05*num_samples)
+        num_train = num_samples - num_val - num_test
+    
+        reshuffle_idx = np.random.choice(range(X.shape[0]), num_samples,replace=False)
+        X = X[reshuffle_idx]
+        Y = Y[reshuffle_idx]
+    
+        X_train = X[:num_train]
+        Y_train = Y[:num_train]
+    
+        X_val = X[num_train:num_train+num_val]
+        Y_val = Y[num_train:num_train+num_val]
+    
+        X_test = X[num_train+num_val:]
+        Y_test = Y[num_train+num_val:]
+    
+        return X_train, Y_train, X_val, Y_val, X_test, Y_test
+    
+    
+    def get_adversarial_version_binary(self, x, y=None, eps=10, iterations=10, attack='JSMA',clip_min=0.0, clip_max = 1.0):
+        """
+        Desc:
+            Caclulate the adversarial version for point x using FGSM
+            x: matrix of n x input_shape samples
+            y: matrix of n x input_label samples
+            eps: used for FGSM
+            attack: FGMS or CW
         
-    def fgsm_attack(self, x, y=None, eps=0.3, clip_min=0.0, clip_max=1.0):
-        """Create FGSM attack points for each row of x"""
-        x_adv = np.zeros_like(x)
-        for i in range(x.shape[0]): 
-            feed_dict = {
-                    self.input_placeholder: x[i].reshape(self.input_shape) ,
-                    self.labels_placeholder: y[i].reshape(self.label_shape),
-                    K.learning_phase(): 0
-             } 
-            grad = self.sess.run(self.grad_loss_wrt_input, feed_dict=feed_dict)[0]
-            x_adv_raw = x[i] + eps*np.sign(grad[0])
-            x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
-        return x_adv
-    
-    def visualize(self, image):
-        import matplotlib
-        import matplotlib.pyplot as plt
+        """
+        if attack=='FGSM':
+            x_adv = fgsm_attack_binary(self, x,y, clip_min=clip_min, clip_max=clip_max)
+       
+        elif attack=='BIM-A':
+            x_adv = bim_a_attack_binary(self,x,y, iterations=iterations, clip_min=clip_min, clip_max=clip_max)
+                        
+        elif attack == 'BIM-B':
+            x_adv = bim_b_attack_binary(self,x,y, iterations=iterations, clip_min=clip_min, clip_max=clip_max)
+                
+        elif attack == 'JSMA':
+             x_adv = jsma_binary(self,x,y, iterations=iterations, clip_min=clip_min, clip_max=clip_max)
+            
+        return x_adv    
         
-        plt.figure(figsize=(1, 1))
-        if image.shape[-1] == 1:
-            # image is in black and white
-            image = image[:, :, 0]
-            plt.imshow(image, cmap='Greys')
-        else:
-            # image is in color
-            plt.imshow(image)
-        plt.axis('off')
-        plt.show()
-
-
-    
-    def fgsm_wb_attack(self, x, y=None, eps=0.3, clip_min=0.0, clip_max=1.0, x_tar=None, y_tar=None, x_guide=None, y_guide=None, total_grad=None):
-        """Create Whitebox FGSM attack points """
-        x_adv = np.zeros_like(x)
-            
-        #Iterate over all samples to be perturbed
-        for i in range(x.shape[0]): 
-            feed_dict = {
-                self.input_placeholder: x[i].reshape(self.input_shape) ,
-                self.labels_placeholder: y[i].reshape(self.label_shape),
-                x_guide: x_tar[i].reshape(self.input_shape), 
-                y_guide: y_tar[i].reshape(self.label_shape),
-                K.learning_phase(): 0
-             } 
-            grad = self.sess.run(total_grad, feed_dict=feed_dict)[0]
-            x_adv_raw = x[i] + eps*np.sign(grad[0])
-            x_adv[i] = x_adv_raw.clip(clip_min, clip_max)
-            
-        return x_adv
-    
     def get_adversarial_version(self, x, y=None, eps=0.3, iterations=10000,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, nb_candidate=10):
         """
         Desc:
@@ -351,71 +328,25 @@ class NeuralNetwork(object):
         
         """
         if attack=='FGSM':
-            x_adv = self.fgsm_attack(x,y, eps=eps, clip_min=clip_min, clip_max=clip_max)
+            x_adv = fgsm_attack(self,x,y, eps=eps, clip_min=clip_min, clip_max=clip_max)
        
         if attack=='FGSM-WB':
             #Create matrix to store adversarial samples
-            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
-            x_adv = self.fgsm_wb_attack(x,y=y,eps=eps,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar, y_tar=y_tar, x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)
+            x_guide, y_guide, total_grad = create_wb_fgsm_graph(self)
+            x_adv = fgsm_wb_attack(self,x,y=y,eps=eps,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar, y_tar=y_tar, x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)
         
         #We implement BIM-A as cleverhans does not directly support it
         elif attack=='BIM-A':
-            x_adv = np.zeros_like(x)
-            eps_ = eps / float(iterations)
-            for i in range(x.shape[0]): 
-                x_adv_clipped = x[i]
-                for k in range(iterations):
-                    x_curr = np.array([x_adv_clipped])
-                    y_curr = np.array([y[i]])
-                    x_adv_clipped = self.fgsm_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max)[0]
-                    #Check if the label has changed. Stop if so.
-                    if np.argmax(self.model.predict(x_adv_clipped.reshape(*self.input_shape))) != np.argmax(y[i]):
-                        break
-                x_adv[i] = x_adv_clipped
+            x_adv = bim_a_attack(self,x,y, eps=eps, clip_min=clip_min, clip_max=clip_max)
                         
         elif attack == 'BIM-B':
-            x_adv = np.zeros_like(x)
-            eps_ = eps / float(iterations)
-            for i in range(x.shape[0]): 
-                x_adv_clipped = x[i]
-                for k in range(iterations):
-                    x_curr = np.array([x_adv_clipped])
-                    y_curr = np.array([y[i]])
-                    x_adv_clipped = self.fgsm_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max)[0]
-                x_adv[i] = x_adv_clipped
+            x_adv = bim_b_attack(self,x,y, eps=eps, clip_min=clip_min, clip_max=clip_max)
                 
         elif attack=='BIM-A-WB':
-            x_adv = np.zeros_like(x)
-            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
-            eps_ = eps / float(iterations)
-            for i in range(x.shape[0]): 
-                x_adv_clipped = x[i]
-                for k in range(iterations):
-                    x_curr = np.array([x_adv_clipped])
-                    y_curr = np.array([y[i]])
-                    x_tar_curr = np.array([x_tar[i]])
-                    y_tar_curr = np.array([y_tar[i]])
-                    x_adv_clipped = self.fgsm_wb_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar_curr, y_tar=y_tar_curr,x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)[0]
-                    #Check if the label has changed. Stop if so.
-                    if np.argmax(self.model.predict(x_adv_clipped.reshape(*self.input_shape))) != np.argmax(y[i]):
-                        break
-                x_adv[i] = x_adv_clipped
-
-        
+            x_adv = bim_a_wb_attack(self,x,y=y,eps=eps,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar, y_tar=y_tar)
                         
         elif attack=='BIM-B-WB':
-            x_adv = np.zeros_like(x)
-            x_guide, y_guide, total_grad = self.create_wb_fgsm_graph()
-            eps_ = eps / float(iterations)
-            for i in range(x.shape[0]): 
-                x_adv_clipped = x[i]
-                for k in range(iterations):
-                    x_curr = np.array([x_adv_clipped])
-                    y_curr = np.array([y[i]])
-                    x_tar_curr = np.array([x_tar[i]])
-                    y_tar_curr = np.array([y_tar[i]])
-                    x_adv_clipped = self.fgsm_wb_attack(x_curr,y=y_curr, eps=eps_,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar_curr, y_tar=y_tar_curr,x_guide=x_guide, y_guide=y_guide, total_grad=total_grad)[0]
-                x_adv[i] = x_adv_clipped   
+            x_adv = bim_a_wb_attack(self,x,y=y,eps=eps,clip_min=clip_min, clip_max=clip_max,x_tar=x_tar, y_tar=y_tar)
         
         elif attack == 'CW':
             K.set_learning_phase(0)
@@ -423,7 +354,6 @@ class NeuralNetwork(object):
             model = KerasModelWrapper(self.model)
             cw = CarliniWagnerL2(model, sess=self.sess)
             adv_inputs = x
-            
             if targeted:
                 adv_ys = y_tar
                 guide_inp = x_tar
@@ -446,8 +376,7 @@ class NeuralNetwork(object):
                   'clip_min': clip_min,
                   'clip_max': clip_max,
                  'initial_const': 10}     
-                
-              
+
             x_adv = cw.generate_np(adv_inputs,**cw_params)
             
         elif attack == 'DF':
@@ -456,8 +385,7 @@ class NeuralNetwork(object):
             df = DeepFool(model, sess=self.sess)
             df_params = {'nb_candidate': nb_candidate}
             x_adv = df.generate_np(x,**df_params)
-       
-    
+
         elif attack == 'JSMA':
             K.set_learning_phase(0)
             model = KerasModelWrapper(self.model)
@@ -471,19 +399,6 @@ class NeuralNetwork(object):
             
         return x_adv
         
-    def get_random_version(self, x, y, eps=0.3,min_clip=0.0, max_clip=1.0):
-        """
-        Desc:
-            Caclulate the adversarial version for point x using FGSM
-            x: n x input_shape matrix of samples to perturb
-            y: n x label_shape matrix of labels
-            eps: eps to use for perturbation
-        
-        """
-        x_rand_raw = x + eps*np.sign(np.random.uniform(low=-0.01,high=0.01,size=x.shape))
-        x_rand = x_rand_raw.clip(min_clip, max_clip)
-        return x_rand
-    
     
     def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False, nb_candidate=10):
         """
@@ -514,12 +429,37 @@ class NeuralNetwork(object):
             x_perturbed = self.get_adversarial_version(x,y,attack='DF', nb_candidate=nb_candidate)
         elif perturbation == 'JSMA':
             x_perturbed = self.get_adversarial_version(x,y,attack='JSMA')
-        else:
-            x_perturbed = self.get_random_version(x,y,eps)
+        elif perturbation == 'NOISY':
+            x_perturbed = get_random_version(self, x,y,eps)
         
         return x_perturbed
-        
     
+    def generate_perturbed_data_binary(self, x, y=None, iterations=100,seed=SEED, perturbation='FGSM', targeted=False):
+        """
+        Generate a perturbed data set using FGSM, CW, or random uniform noise.
+        x: n x input_shape matrix
+        y: n x input_labels matrix
+        seed: seed to use for reproducing experiments
+        perturbation: FGSM, CW, or Noise.
+        
+        return:
+        x_perturbed: perturbed version of x
+        """
+        if perturbation == 'FGSM':
+            x_perturbed = self.get_adversarial_version_binary(x,y,attack='FGSM')
+        elif perturbation == 'BIM-A':
+            x_perturbed = self.get_adversarial_version_binary(x,y,attack='BIM-A', iterations=iterations)     
+        elif perturbation == 'BIM-B':
+            x_perturbed = self.get_adversarial_version_binary(x,attack='BIM-B',iterations=iterations)
+        elif perturbation == 'JSMA':
+            x_perturbed = self.get_adversarial_version_binary(x,y,attack='JSMA',iterations=iterations)
+        elif perturbation == 'NOISY':
+            x_perturbed = get_random_version_binary(self,x,y)
+        
+        return x_perturbed    
+    
+    
+    #Random sampling from dataset
     def gen_rand_indices_all_classes(self, y=None, seed=SEED,num_samples=10):
         """
            Generate random indices to be used for sampling points
@@ -556,22 +496,3 @@ class NeuralNetwork(object):
         indices = np.random.choice(range(low,high), num_samples)
         return indices
         
-        
-    def train(self, epochs):
-        """
-        Desc:
-            Trains model for a specified number of epochs.
-        """    
-       
-        self.model.fit(
-            self.train_data, 
-            self.train_labels,
-            epochs=epochs,
-            batch_size=128,
-            validation_data=(self.val_data, self.val_labels),
-            verbose=1,
-            shuffle=True
-        )
-
-        self.model.evaluate(self.test_data, self.test_labels, batch_size=self.batch_size)
-    
