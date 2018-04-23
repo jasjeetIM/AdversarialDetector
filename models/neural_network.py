@@ -11,12 +11,10 @@ from cleverhans.utils_keras import KerasModelWrapper
 from cleverhans.attacks import CarliniWagnerL2, BasicIterativeMethod, DeepFool, SaliencyMapMethod
 
 import numpy as np
-import os, time, math, pickle
+import os, time, math, pickle, gc
 from keras import backend as K
 from keras.models import Sequential
 from keras.utils import np_utils
-import matplotlib
-import matplotlib.pyplot as plt
 
 SEED = 14
 

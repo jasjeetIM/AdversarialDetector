@@ -2,11 +2,6 @@ from __future__ import division
 from __future__ import print_function
 
 import tensorflow as tf
-from tensorflow import gradients
-from tensorflow.python.framework import ops
-from tensorflow.python.ops import array_ops, math_ops
-from tensorflow.examples.tutorials.mnist import input_data
-
 import numpy as np
 import os, time, math
 from keras import backend as K
