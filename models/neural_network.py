@@ -16,13 +16,11 @@ from keras import backend as K
 from keras.models import Sequential
 from keras.utils import np_utils
 
-SEED = 14
-
-
 class NeuralNetwork(object):
     """General Neural Network Class for multi-class classification """
+    SEED = 14
     
-    def __init__(self, model_name=None, dataset='mnist', batch_size=512, initial_learning_rate=8e-1, load_from_file=False, load_model_path='', load_weights_path=''):
+    def __init__(self, model_name=None, dataset='mnist', batch_size=512, initial_learning_rate=8e-1, load_from_file=False, load_model_path='', load_weights_path='', seed=14):
         """
         Desc:
             Constructor
@@ -36,7 +34,7 @@ class NeuralNetwork(object):
             model_chkpt_file: tf model file containing params
                   
         """
-        
+        SEED = seed
         #Reproduciblity of experiments
         np.random.seed(SEED)
         tf.set_random_seed(SEED)
@@ -134,6 +132,7 @@ class NeuralNetwork(object):
                        
             #Pick two classes at random and update dataset
             c1, c2 = np.random.choice(range(10), 2)[:]
+            print ('Using classes: %d, and %d' % (c1, c2))
 
             X_train = X_train[np.where((Y_train == c1) | (Y_train == c2))[0]]
             Y_train = Y_train[np.where((Y_train == c1) | (Y_train == c2))[0]]
@@ -432,7 +431,7 @@ class NeuralNetwork(object):
         
         return x_perturbed
     
-    def generate_perturbed_data_binary(self, x, y=None, iterations=100,seed=SEED, perturbation='FGSM', targeted=False):
+    def generate_perturbed_data_binary(self, x, y=None, iterations=10,seed=SEED, perturbation='FGSM', targeted=False):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -448,11 +447,11 @@ class NeuralNetwork(object):
         elif perturbation == 'BIM-A':
             x_perturbed = self.get_adversarial_version_binary(x,y,attack='BIM-A', iterations=iterations)     
         elif perturbation == 'BIM-B':
-            x_perturbed = self.get_adversarial_version_binary(x,attack='BIM-B',iterations=iterations)
+            x_perturbed = self.get_adversarial_version_binary(x,y,attack='BIM-B',iterations=iterations)
         elif perturbation == 'JSMA':
             x_perturbed = self.get_adversarial_version_binary(x,y,attack='JSMA',iterations=iterations)
         elif perturbation == 'NOISY':
-            x_perturbed = get_random_version_binary(self,x,y)
+            x_perturbed = get_random_version_binary(self,x,y, eps=iterations)
         
         return x_perturbed    
     

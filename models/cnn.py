@@ -12,8 +12,6 @@ from keras.layers import Input, Dense, Dropout, Activation, Flatten, Conv2D, Max
 
 from models.neural_network import NeuralNetwork
 
-SEED = 14
-
 
 class CNN(NeuralNetwork):
     """Convolutional Neural Network - 2 hidden layers (for now) """
