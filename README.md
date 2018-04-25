@@ -1,2 +1,2 @@
 # AdversarialDetector
-White-box detector of adversarial samples for MNIST, SVHN, CIFAR2 datasets. 
+White-box detector of adversarial samples for MNIST, DREBIN, CIFAR2 datasets. 
