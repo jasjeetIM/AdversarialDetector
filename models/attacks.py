@@ -30,7 +30,7 @@ def get_random_version_binary(model, x, y, eps = 10, min_clip=0.0, max_clip=1.0)
     x_rand = np.zeros_like(x)
     for i in range(x.shape[0]):
         x_rand_raw = x[i]
-        rand_idx = np.random.choice(range(len(model.input_shape[1])), eps)
+        rand_idx = np.random.choice(range(model.input_shape[1]), eps)
         x_rand_raw[rand_idx]+=1
         x_rand[i] = x_rand_raw % 2    
     return x_rand
@@ -38,24 +38,26 @@ def get_random_version_binary(model, x, y, eps = 10, min_clip=0.0, max_clip=1.0)
 #Binary Attacks
 
 
-def modify_input(model, x_in, y_in,domain_in):
+def jsma_symbolic_update(model, x_in, y_in,domain_in, clip_min, clip_max):
     preds = model.model(x_in)
-    preds_onehot = tf.one_hot(tf.argmax(preds, axis=1), depth=nb_classes)
+    preds_onehot = tf.one_hot(tf.argmax(preds, axis=1), depth=model.num_classes)
   
+    #We always increase features
+    increase = True
+    
     # create the Jacobian graph
     list_derivatives = []
-    for class_ind in xrange(nb_classes):
+    for class_ind in xrange(model.num_classes):
         derivatives = tf.gradients(preds[:, class_ind], x_in)
         list_derivatives.append(derivatives[0])
     grads = tf.reshape(tf.stack(list_derivatives),
-               shape=[nb_classes, -1, nb_features])
-
+               shape=[model.num_classes, -1, model.input_shape[1]])
     # Compute the Jacobian components
     # To help with the computation later, reshape the target_class
     # and other_class to [nb_classes, -1, 1].
     # The last dimention is added to allow broadcasting later.
     target_class = tf.reshape(tf.transpose(y_in, perm=[1, 0]),
-                  shape=[nb_classes, -1, 1])
+                  shape=[model.num_classes, -1, 1])
     other_classes = tf.cast(tf.not_equal(target_class, 1), tf.float32)
 
     grads_target = tf.reduce_sum(grads * target_class, axis=0)
@@ -85,10 +87,9 @@ def modify_input(model, x_in, y_in,domain_in):
     scores = tf.cast(scores_mask, tf.float32) * (-target_tmp * other_tmp)
     # Extract the best pixel
     best = tf.argmax(
-          tf.reshape(scores, shape=[-1, nb_features]),
-          axis=1)[0]
+          tf.reshape(scores, shape=[-1, model.input_shape[1]]),axis=1)[0]
    
-    p1_one_hot = tf.one_hot(best, depth=nb_features)
+    p1_one_hot = tf.one_hot(best, depth=model.input_shape[1])
  
     # Update the search domain
     domain_out = domain_in - p1_one_hot
@@ -101,34 +102,11 @@ def modify_input(model, x_in, y_in,domain_in):
         x_out = tf.maximum(clip_min, x_in - p1_one_hot)
   
     return x_out, domain_out, preds
-
-
-def bim_a_attack_binary(model, x, y=None, clip_min=0.0, clip_max=1.0):
-    """Create FGSM attack points for each row of x"""
-    X_adv = np.zeros_like(x)
-    gradients = model.grad_loss_wrt_input
-    adv = tf.sign(gradients)
-    #Get all non negative indices
-    neg = tf.constant(-1, shape=(model.input_shape),dtype=tf.float32)
-    pos_idx = tf.cast(tf.not_equal(adv, neg), dtype=tf.float32)
-    #Add 1 to all indices that will make the loss go up
-    x_adv_raw = x + pos_idx
-    #Clip feature vectors to be 0 or 1
-    x_adv = tf.mod(x_adv_raw, 2)
-    
-    for i in range(x.shape[0]): 
-        feed_dict = {
-          model.input_placeholder: x[i].reshape(model.input_shape) ,
-          model.labels_placeholder: y[i].reshape(model.label_shape),
-          K.learning_phase(): 0
-           } 
-        x_adversarial = model.sess.run(x_adv, feed_dict=feed_dict)[0]
-        X_adv[i] = x_adversarial
-    return X_adv
   
 def jsma_binary(model, x, y=None, clip_min=0.0, clip_max=1.0, iterations=100):
     search_domain = tf.placeholder(dtype=tf.float32, shape=model.input_shape)
-    x_out, domain_out, preds = model.modify_input(model.input_placeholder, model.labels_placeholder, search_domain)
+    labels_placeholder = tf.cast(model.labels_placeholder,tf.float32)
+    x_out, domain_out, preds = jsma_symbolic_update(model, model.input_placeholder, labels_placeholder, search_domain, clip_min, clip_max)
  
     X_adv = np.zeros_like(x)
     avg_iterations = 0
@@ -138,14 +116,14 @@ def jsma_binary(model, x, y=None, clip_min=0.0, clip_max=1.0, iterations=100):
         d_i = (x_i != 1).astype(int)  
         for j in range(iterations): 
             feed_dict={
-              model.input_placeholder: x_i,
-              model.labels_placeholder: y_, 
-              search_domain: d_i,
+              model.input_placeholder: x_i.reshape(model.input_shape),
+              model.labels_placeholder: y_.reshape(model.label_shape), 
+              search_domain: d_i.reshape(model.input_shape),
               K.learning_phase():0 
             }
       
             #Get updated values for input and search domain
-            x_i, d_i, pred = sess.run([x_out, domain_out, preds], feed_dict=feed_dict)
+            x_i, d_i, pred = model.sess.run([x_out, domain_out, preds], feed_dict=feed_dict)
             if (np.argmax(y_) == np.argmax(pred)):
                 break
             #Update return matrix
@@ -161,7 +139,7 @@ def fgsm_attack_binary(model, x, y=None, clip_min=0.0, clip_max=1.0):
     neg = tf.constant(-1, shape=(model.input_shape),dtype=tf.float32)
     pos_idx = tf.cast(tf.not_equal(adv, neg), dtype=tf.float32)
     #Add 1 to all indices that will make the loss go up
-    x_adv_raw = x + pos_idx
+    x_adv_raw = model.input_placeholder + pos_idx
     #Clip feature vectors to be 0 or 1
     x_adv = tf.mod(x_adv_raw, 2)
     
@@ -181,9 +159,9 @@ def bim_a_attack_binary(model, x, y=None, iterations=10,clip_min=0.0, clip_max=1
     gradients = model.grad_loss_wrt_input
     adv = tf.sign(gradients)
     #Get feature with highest derivative
-    best = tf.argmax(tf.reshape(gradients, [1,545333]), axis=1)[0]
-    p1 = tf.one_hot(best, depth=nb_features)
-    x_adv_raw = x + p1
+    best = tf.argmax(tf.reshape(gradients, shape=(model.input_shape)), axis=1)[0]
+    p1 = tf.one_hot(best, depth=model.input_shape[1])
+    x_adv_raw = model.input_placeholder + p1
     #Clip feature vectors to be 0 or 1
     x_adv = tf.mod(x_adv_raw, 2)
 
@@ -192,12 +170,12 @@ def bim_a_attack_binary(model, x, y=None, iterations=10,clip_min=0.0, clip_max=1
         y_i = y[i]    
         for j in range(iterations):
             feed_dict={
-              x: x_i,
-              y_: y_i,
+              model.input_placeholder: x_i.reshape(model.input_shape),
+              model.labels_placeholder: y_i.reshape(model.label_shape),
               K.learning_phase():0
             }
-            x_i = sess.run(x_adv ,feed_dict=feed_dict)
-            if np.argmax(model.model.predict(x_adv.reshape(*model.input_shape))) != np.argmax(y[i]):
+            x_i = model.sess.run(x_adv ,feed_dict=feed_dict)[0]
+            if np.argmax(model.model.predict(x_i.reshape(*model.input_shape))) != np.argmax(y[i]):
                 break  
         X_adv[i] = x_i
     
@@ -209,9 +187,9 @@ def bim_b_attack_binary(model, x, y=None, iterations=10,clip_min=0.0, clip_max=1
     gradients = model.grad_loss_wrt_input
     adv = tf.sign(gradients)
     #Get feature with highest derivative
-    best = tf.argmax(tf.reshape(gradients, [1,545333]), axis=1)[0]
-    p1 = tf.one_hot(best, depth=nb_features)
-    x_adv_raw = x + p1
+    best = tf.argmax(tf.reshape(gradients, shape=(model.input_shape)), axis=1)[0]
+    p1 = tf.one_hot(best, depth=model.input_shape[1])
+    x_adv_raw = model.input_placeholder + p1
     #Clip feature vectors to be 0 or 1
     x_adv = tf.mod(x_adv_raw, 2)
 
@@ -220,11 +198,11 @@ def bim_b_attack_binary(model, x, y=None, iterations=10,clip_min=0.0, clip_max=1
         y_i = y[i]    
         for j in range(iterations):
             feed_dict={
-              x: x_i,
-              y_: y_i,
+              model.input_placeholder: x_i.reshape(model.input_shape),
+              model.labels_placeholder: y_i.reshape(model.label_shape),
               K.learning_phase():0
             }
-            x_i = sess.run(x_adv ,feed_dict=feed_dict)
+            x_i = model.sess.run(x_adv ,feed_dict=feed_dict)[0]
         
         X_adv[i] = x_i
     
