@@ -1,7 +1,35 @@
 import numpy as np
 import matplotlib, gc
 import matplotlib.pyplot as plt
+from tensorflow import gradients
+from tensorflow.python.framework import ops
+from tensorflow.python.ops import array_ops, math_ops
 
+
+def hessian_vector_product(ys, xs, v):
+    """ Multiply the Hessian of `ys` wrt `xs` by `v` """ 
+
+    # Validate the input
+    length = len(xs)
+    if len(v) != length:
+         raise ValueError("xs and v must have the same length.")
+
+    # First backprop
+    grads = gradients(ys, xs)
+    assert len(grads) == length
+    elemwise_products = [
+      math_ops.multiply(grad_elem, array_ops.stop_gradient(v_elem))
+      for grad_elem, v_elem in zip(grads, v) if grad_elem is not None
+        ]
+
+    # Second backprop  
+    grads_with_none = gradients(elemwise_products, xs)
+    return_grads = [
+      grad_elem if grad_elem is not None \
+      else tf.zeros_like(x) \
+      for x, grad_elem in zip(xs, grads_with_none)]
+  
+    return return_grads
 
 def avg_l2_dist(orig, adv):
     """Get the mean l2 distortion between two orig and adv images"""
@@ -30,7 +58,9 @@ def normalize(matrix):
     """Normalize each row vector in a matrix"""
     matrix_nm = np.zeros_like(matrix)
     for i in range(matrix.shape[0]):
-        matrix_nm[i] = matrix[i]/np.linalg.norm(matrix[i]) 
+        norm = np.linalg.norm(matrix[i]) 
+        if norm > 0:
+            matrix_nm[i] = matrix[i]/np.linalg.norm(matrix[i]) 
     return matrix_nm
 
 def preds_to_labels(preds):
