@@ -281,7 +281,7 @@ class NeuralNetwork(object):
             
         return inverse_hvp_
     
-    def get_inverse_hvp_lissa(self, v, scale=10000.0, damping=0.0, num_samples=1, recursion_depth=100):
+    def get_inverse_hvp_lissa(self, v, scale=10000.0, damping=0.0, num_samples=1, recursion_depth=100, seed=SEED):
         """
         Desc:
             Lissa algorithm used for approximating the inverse HVP
@@ -296,6 +296,7 @@ class NeuralNetwork(object):
         print_iter = recursion_depth / 10
 
         for i in range(num_samples):
+            np.random.seed(seed)
             samples = np.random.choice(len(self.train_data), size=recursion_depth)
             cur_estimate = v
 
@@ -512,7 +513,7 @@ class NeuralNetwork(object):
         return x_adv
         
     
-    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False, nb_candidate=10):
+    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=50,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False, nb_candidate=10):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix

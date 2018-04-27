@@ -28,7 +28,6 @@ def hessian_vector_product(ys, xs, v):
       grad_elem if grad_elem is not None \
       else tf.zeros_like(x) \
       for x, grad_elem in zip(xs, grads_with_none)]
-  
     return return_grads
 
 def avg_l2_dist(orig, adv):
@@ -116,3 +115,8 @@ def comp_norm(norm_a, norm_b):
         if norm_a[i] > norm_b[i]:
             count+=1.0
     return (count/num_)
+
+def get_test_from_train_idx(a, b):
+    mask = np.ones_like(a,dtype=bool)
+    mask[b] = False
+    return a[mask]
