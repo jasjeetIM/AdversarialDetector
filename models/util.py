@@ -38,18 +38,22 @@ def avg_l2_dist(orig, adv):
     return l2_dist/orig.shape[0]
 
 
-def visualize(image):
-    """Visualize gray scale or color image"""
-    plt.figure(figsize=(1, 1))
-    if image.shape[-1] == 1:
-        # image is in black and white
-        image = image[:, :, 0]
-        plt.imshow(image, cmap='Greys')
-    else:
-        # image is in color
-        plt.imshow(image)
-    
-    plt.axis('off')
+def visualize(image_list, num_images):
+    """Visualize images in a grid"""
+    assert(len(image_list) == num_images)
+    fig=plt.figure(figsize=(15,15))
+    columns = num_images
+    for i in range(1, columns+1):
+        img = image_list[i-1]
+        
+        fig.add_subplot(1, columns, i)
+        if img.shape[-1] == 1:
+            img = np.squeeze(img)
+            plt.imshow(img,cmap='Greys')
+        else:
+            plt.imshow(img)
+        plt.axis('off')    
+        
     plt.show()
 
 #Normalize rows of a given matrix
