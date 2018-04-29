@@ -430,7 +430,7 @@ class NeuralNetwork(object):
             
         return x_adv    
         
-    def get_adversarial_version(self, x, y=None, eps=0.3, iterations=10000,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, nb_candidate=10):
+    def get_adversarial_version(self, x, y=None, eps=0.3, iterations=10000,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, use_logreg=False, num_logreg=0,nb_candidate=10, train_grads=None, num_params=100):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -469,26 +469,32 @@ class NeuralNetwork(object):
             adv_inputs = x
             if targeted:
                 adv_ys = y_tar
-                guide_inp = x_tar
+                if use_cos_norm_reg:
+                    guide_inp = x_tar
+                else:
+                    guide_inp = None
                 yname = "y_target"
-                use_cos_norm_reg = use_cos_norm_reg
             else:     
                 yname = 'y'
                 adv_ys = None
                 guide_inp = None
-                use_cos_norm_reg = use_cos_norm_reg
-                   
+                
+                
             cw_params = {'binary_search_steps': 1,
-                 'abort_early': False,
-                 yname: adv_ys,
+                 'abort_early': True,
+                  yname: adv_ys,
                  'guide_img': guide_inp,
                  'max_iterations': iterations,
                  'use_cos_norm_reg': use_cos_norm_reg,
+                 'use_logreg': use_logreg,
+                 'train_grads': train_grads,
+                 'num_logreg': num_logreg,
+                 'num_params': num_params,
                  'learning_rate': 0.1,
                  'batch_size': 1,
                   'clip_min': clip_min,
                   'clip_max': clip_max,
-                 'initial_const': 10}     
+                 'initial_const': 10,}     
 
             x_adv = cw.generate_np(adv_inputs,**cw_params)
             
@@ -513,7 +519,7 @@ class NeuralNetwork(object):
         return x_adv
         
     
-    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=50,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False, nb_candidate=10):
+    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=50,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False,use_logreg=False, num_logreg=0, nb_candidate=10, train_grads=None, num_params=100):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
@@ -529,7 +535,7 @@ class NeuralNetwork(object):
         elif perturbation == 'FGSM-WB':
             x_perturbed = self.get_adversarial_version(x,y,attack='FGSM-WB', eps=eps, x_tar=x_tar, y_tar=y_tar)     
         elif perturbation == 'CW':
-            x_perturbed = self.get_adversarial_version(x,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, y_tar=y_tar,use_cos_norm_reg=use_cos_norm_reg)
+            x_perturbed = self.get_adversarial_version(x,attack='CW',iterations=iterations,eps=eps, targeted=targeted, x_tar=x_tar, y_tar=y_tar,use_cos_norm_reg=use_cos_norm_reg,use_logreg=use_logreg, num_logreg=num_logreg, train_grads=train_grads, num_params=num_params)
         elif perturbation == 'BIM-A':
             x_perturbed = self.get_adversarial_version(x,y,attack='BIM-A',iterations=iterations,eps=eps)
         elif perturbation == 'BIM-A-WB':

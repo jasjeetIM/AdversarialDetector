@@ -33,10 +33,13 @@ def hessian_vector_product(ys, xs, v):
 def avg_l2_dist(orig, adv):
     """Get the mean l2 distortion between two orig and adv images"""
     l2_dist = 0.0
-    for i in range(orig.shape[0]):
-        l2_dist+= np.linalg.norm(orig[i] - adv[i])
-    return l2_dist/orig.shape[0]
-
+    num_ = orig.shape[0]
+    if num_ > 0:
+        for i in range(orig.shape[0]):
+            l2_dist+= np.linalg.norm(orig[i] - adv[i])
+        return l2_dist/orig.shape[0]
+    else:
+        return np.nan
 
 def visualize(image_list, num_images):
     """Visualize images in a grid"""
@@ -83,44 +86,71 @@ def norms_and_cos(model, data, labels, grads_train):
 def greater_cos(cos_sim, eta):
     count = 0.0
     num_ = cos_sim.shape[0]
-    for i in range(num_):
-        if np.max(cos_sim[i]) > eta:
-            count+=1.0
-    return (count/num_)
+    if num_ > 0:
+        for i in range(num_):
+            if np.max(cos_sim[i]) > eta:
+                count+=1.0
+        return (count/num_)
+    else:
+        return 0.0
 
 def smaller_norm(norms, gamma):
     count=0.0
     num_ = norms.shape[0]
-    for i in range(num_):
-        if norms[i] < gamma:
-            count+=1.0
-    return (count/num_)
-
+    if num_ > 0:
+        for i in range(num_):
+            if norms[i] < gamma:
+                count+=1.0
+        return (count/num_)
+    else:
+        return 0.0
+    
 def cos_and_norm_sep(cos_sim, norms, eta, gamma):
     count=0.0
     num_ = norms.shape[0]
-    for i in range(num_):
-        if np.max(cos_sim[i]) > eta and norms[i] < gamma:
-            count+=1.0
-    return (count/num_)
-
+    if num_ > 0:
+        for i in range(num_):
+            if np.max(cos_sim[i]) > eta and norms[i] < gamma:
+                count+=1.0
+        return (count/num_)
+    else:
+        return 0.0
+    
 def comp_cos(cos_a, cos_b):
     count = 0.0
     num_ = cos_a.shape[0]
-    for i in range(num_):
-        if np.max(cos_a[i]) > np.max(cos_b[i]):
-            count+=1.0
-    return (count/num_)
-
+    if num_ > 0:
+        for i in range(num_):
+            if np.max(cos_a[i]) > np.max(cos_b[i]):
+                count+=1.0
+        return (count/num_)
+    else:
+        return 0.0
+    
 def comp_norm(norm_a, norm_b):
     count = 0.0
     num_ = norm_a.shape[0]
-    for i in range(num_):
-        if norm_a[i] > norm_b[i]:
-            count+=1.0
-    return (count/num_)
-
+    if num_ > 0:
+        for i in range(num_):
+            if norm_a[i] > norm_b[i]:
+                count+=1.0
+        return (count/num_)
+    else:
+        return 0.0
+    
 def get_test_from_train_idx(a, b):
     mask = np.ones_like(a,dtype=bool)
     mask[b] = False
     return a[mask]
+
+def get_guide_idx(model, guides=None, idx_filter=None, cos_sim=None, data_indices=None, idx=0,random=False):
+    if random:
+        label = np.argmax(guides[idx])
+        guide_imgs_indices = np.where(model.train_labels[:,label] == 1)[0]
+        guide_img_idx = np.random.choice(guide_imgs_indices, 1)[0]
+    else:
+        idx_ = np.where(idx_filter == idx)[0][0]
+        max_sim_idx = np.argmax(cos_sim[idx_])
+        guide_img_idx = data_indices[max_sim_idx]
+        
+    return guide_img_idx
