@@ -41,7 +41,7 @@ def avg_l2_dist(orig, adv):
     else:
         return np.nan
 
-def visualize(image_list, num_images):
+def visualize(image_list, num_images, savefig=''):
     """Visualize images in a grid"""
     assert(len(image_list) == num_images)
     fig=plt.figure(figsize=(15,15))
@@ -58,6 +58,7 @@ def visualize(image_list, num_images):
         plt.axis('off')    
         
     plt.show()
+    fig.savefig(savefig,bbox_inches='tight')
 
 #Normalize rows of a given matrix
 def normalize(matrix):
