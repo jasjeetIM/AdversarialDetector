@@ -144,14 +144,9 @@ def get_test_from_train_idx(a, b):
     mask[b] = False
     return a[mask]
 
-def get_guide_idx(model, guides=None, idx_filter=None, cos_sim=None, data_indices=None, idx=0,random=False):
-    if random:
-        label = np.argmax(guides[idx])
-        guide_imgs_indices = np.where(model.train_labels[:,label] == 1)[0]
-        guide_img_idx = np.random.choice(guide_imgs_indices, 1)[0]
-    else:
-        idx_ = np.where(idx_filter == idx)[0][0]
-        max_sim_idx = np.argmax(cos_sim[idx_])
-        guide_img_idx = data_indices[max_sim_idx]
+def get_guide_idx(model, idx_filter=None, cos_sim=None, data_indices=None, idx=0):
+    idx_ = np.where(idx_filter == idx)[0][0]
+    max_sim_idx = np.argmax(cos_sim[idx_])
+    guide_img_idx = data_indices[max_sim_idx]
         
     return guide_img_idx
