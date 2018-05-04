@@ -430,7 +430,7 @@ class NeuralNetwork(object):
             
         return x_adv    
         
-    def get_adversarial_version(self, x, y=None, eps=0.3, iterations=10000,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, use_logreg=False, num_logreg=0,nb_candidate=10, train_grads=None, num_params=100):
+    def get_adversarial_version(self, x, y=None, eps=0.3, iterations=100,attack='FGSM', targeted=False, x_tar=None, y_tar=None,clip_min=0.0, clip_max = 1.0, use_cos_norm_reg=False, use_logreg=False, num_logreg=0,nb_candidate=10, train_grads=None, num_params=100):
         """
         Desc:
             Caclulate the adversarial version for point x using FGSM
@@ -513,13 +513,13 @@ class NeuralNetwork(object):
                            'gamma': 0.1,
                            'clip_min': clip_min, 
                            'clip_max': clip_max,
-                           'y_target': None}
+                           'y_target': y_tar}
             x_adv = jsma.generate_np(x, **jsma_params)
             
         return x_adv
         
     
-    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=50,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False,use_logreg=False, num_logreg=0, nb_candidate=10, train_grads=None, num_params=100):
+    def generate_perturbed_data(self, x, y=None, eps=0.3, iterations=100,seed=SEED, perturbation='FGSM', targeted=False, x_tar=None,y_tar=None, use_cos_norm_reg=False,use_logreg=False, num_logreg=0, nb_candidate=10, train_grads=None, num_params=100):
         """
         Generate a perturbed data set using FGSM, CW, or random uniform noise.
         x: n x input_shape matrix
